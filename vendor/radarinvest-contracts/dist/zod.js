@@ -52,13 +52,56 @@ const User = z
   })
   .passthrough();
 
+const BillingCapability = z
+  .object({
+    key: z.string(),
+    allowed: z.boolean(),
+    source: z.enum([
+      "ALWAYS_READ",
+      "TRIAL",
+      "SUBSCRIPTION",
+      "ADMIN_ROLE",
+      "DENIED",
+      "ADDON_PENDING",
+    ]),
+    note: z.string().optional(),
+  })
+  .passthrough();
+
+const BillingAddon = z
+  .object({
+    id: z.string(),
+    version: z.number().int(),
+    status: z.enum(["POLICY_PENDING", "INACTIVE", "ACTIVE"]),
+    requiresBaseSubscription: z.boolean().optional(),
+    note: z.string().optional(),
+  })
+  .passthrough();
+
+const PaymentProviderStub = z
+  .object({
+    configured: z.boolean(),
+    mode: z.enum(["NONE", "TEST_ONLY", "LIVE"]),
+    provider: z.string().nullish(),
+    note: z.string().optional(),
+  })
+  .passthrough();
+
 const BillingStatus = z
   .object({
     plan: z.enum(["CORE", "EXPERT"]),
     status: z.enum(["trialing", "active", "past_due", "canceled", "expired"]),
     writeEnabled: z.boolean(),
+    mode: z.enum(["TRIAL_ACTIVE", "SUBSCRIBED", "CONSULTATION"]),
+    trialStartedAt: z.string().datetime({ offset: true }).nullish(),
     trialEndsAt: z.string().datetime({ offset: true }).nullish(),
+    currentPeriodEnd: z.string().datetime({ offset: true }).nullish(),
     exportUntil: z.string().datetime({ offset: true }).nullish(),
+    consultationExplanation: z.string().optional(),
+    capabilities: z.array(BillingCapability),
+    addons: z.array(BillingAddon),
+    paymentProvider: PaymentProviderStub,
+    openDecisions: z.array(z.string()).optional(),
   })
   .passthrough();
 
@@ -1990,6 +2033,9 @@ export const schemas = {
   AuthTokens,
   LoginRequest,
   User,
+  BillingCapability,
+  BillingAddon,
+  PaymentProviderStub,
   BillingStatus,
   Portfolio,
   PortfolioCreate,

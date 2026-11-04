@@ -8,6 +8,9 @@ export declare const schemas: {
   AuthTokens: z.ZodTypeAny;
   LoginRequest: z.ZodTypeAny;
   User: z.ZodTypeAny;
+  BillingCapability: z.ZodTypeAny;
+  BillingAddon: z.ZodTypeAny;
+  PaymentProviderStub: z.ZodTypeAny;
   BillingStatus: z.ZodTypeAny;
   Portfolio: z.ZodTypeAny;
   PortfolioCreate: z.ZodTypeAny;

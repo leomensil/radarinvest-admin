@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: RadarInvest API
-  version: 0.8.32
+  version: 0.8.33
   description: >
     Contrato canônico Core (MVP). Implementado por radarinvest-api.
     Decimal monetário como string. Provenance obrigatória em métricas (BR-010).
@@ -2379,7 +2379,7 @@ components:
           nullable: true
     BillingStatus:
       type: object
-      required: [plan, status, writeEnabled]
+      required: [plan, status, writeEnabled, mode, capabilities, addons, paymentProvider]
       properties:
         plan:
           type: string
@@ -2389,7 +2389,21 @@ components:
           enum: [trialing, active, past_due, canceled, expired]
         writeEnabled:
           type: boolean
+        mode:
+          type: string
+          enum: [TRIAL_ACTIVE, SUBSCRIBED, CONSULTATION]
+          description: >
+            TRIAL_ACTIVE = degustação com escrita; SUBSCRIBED = assinatura active;
+            CONSULTATION = leitura/export/reconcile sem escrita patrimonial.
+        trialStartedAt:
+          type: string
+          format: date-time
+          nullable: true
         trialEndsAt:
+          type: string
+          format: date-time
+          nullable: true
+        currentPeriodEnd:
           type: string
           format: date-time
           nullable: true
@@ -2397,6 +2411,67 @@ components:
           type: string
           format: date-time
           nullable: true
+          description: Janela RNF06 já existente (não é nova graça comercial inventada neste Inc.).
+        consultationExplanation:
+          type: string
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingCapability"
+        addons:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingAddon"
+        paymentProvider:
+          $ref: "#/components/schemas/PaymentProviderStub"
+        openDecisions:
+          type: array
+          items:
+            type: string
+          description: PEND-* que bloqueiam checkout/preços/gateway
+    BillingCapability:
+      type: object
+      required: [key, allowed, source]
+      properties:
+        key:
+          type: string
+        allowed:
+          type: boolean
+        source:
+          type: string
+          enum: [ALWAYS_READ, TRIAL, SUBSCRIPTION, ADMIN_ROLE, DENIED, ADDON_PENDING]
+        note:
+          type: string
+    BillingAddon:
+      type: object
+      required: [id, version, status]
+      properties:
+        id:
+          type: string
+          description: "ex. addon:radar"
+        version:
+          type: integer
+        status:
+          type: string
+          enum: [POLICY_PENDING, INACTIVE, ACTIVE]
+        requiresBaseSubscription:
+          type: boolean
+        note:
+          type: string
+    PaymentProviderStub:
+      type: object
+      required: [configured, mode]
+      properties:
+        configured:
+          type: boolean
+        mode:
+          type: string
+          enum: [NONE, TEST_ONLY, LIVE]
+        provider:
+          type: string
+          nullable: true
+        note:
+          type: string
     Portfolio:
       type: object
       required: [id, name, createdAt]

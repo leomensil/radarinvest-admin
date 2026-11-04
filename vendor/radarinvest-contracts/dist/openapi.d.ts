@@ -1707,10 +1707,51 @@ export interface components {
             /** @enum {string} */
             status: "trialing" | "active" | "past_due" | "canceled" | "expired";
             writeEnabled: boolean;
+            /**
+             * @description TRIAL_ACTIVE = degustação com escrita; SUBSCRIBED = assinatura active; CONSULTATION = leitura/export/reconcile sem escrita patrimonial.
+             * @enum {string}
+             */
+            mode: "TRIAL_ACTIVE" | "SUBSCRIBED" | "CONSULTATION";
+            /** Format: date-time */
+            trialStartedAt?: string | null;
             /** Format: date-time */
             trialEndsAt?: string | null;
             /** Format: date-time */
+            currentPeriodEnd?: string | null;
+            /**
+             * Format: date-time
+             * @description Janela RNF06 já existente (não é nova graça comercial inventada neste Inc.).
+             */
             exportUntil?: string | null;
+            consultationExplanation?: string;
+            capabilities: components["schemas"]["BillingCapability"][];
+            addons: components["schemas"]["BillingAddon"][];
+            paymentProvider: components["schemas"]["PaymentProviderStub"];
+            /** @description PEND-* que bloqueiam checkout/preços/gateway */
+            openDecisions?: string[];
+        };
+        BillingCapability: {
+            key: string;
+            allowed: boolean;
+            /** @enum {string} */
+            source: "ALWAYS_READ" | "TRIAL" | "SUBSCRIPTION" | "ADMIN_ROLE" | "DENIED" | "ADDON_PENDING";
+            note?: string;
+        };
+        BillingAddon: {
+            /** @description ex. addon:radar */
+            id: string;
+            version: number;
+            /** @enum {string} */
+            status: "POLICY_PENDING" | "INACTIVE" | "ACTIVE";
+            requiresBaseSubscription?: boolean;
+            note?: string;
+        };
+        PaymentProviderStub: {
+            configured: boolean;
+            /** @enum {string} */
+            mode: "NONE" | "TEST_ONLY" | "LIVE";
+            provider?: string | null;
+            note?: string;
         };
         Portfolio: {
             /** Format: uuid */

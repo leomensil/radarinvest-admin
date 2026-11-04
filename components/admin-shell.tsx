@@ -19,6 +19,7 @@ const SECTIONS = [
     title: "Acesso",
     items: [
       { href: "/admin/users", label: "Usuários" },
+      { href: "/admin/commercial", label: "Comercial (leitura)" },
       { href: "/admin/subscriptions", label: "Trial / entitlements" },
     ],
   },
