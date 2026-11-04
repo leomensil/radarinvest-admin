@@ -1452,7 +1452,12 @@ const exportScope_Body = z
 
 const DiagnoseRequest = z
   .object({
-    portfolioId: z.string().uuid(),
+    portfolioIds: z.array(z.string().uuid()).min(1),
+    portfolioId: z.string().uuid().optional(),
+    adapter: z
+      .enum(["DETERMINISTIC", "EXTERNAL"])
+      .optional()
+      .default("DETERMINISTIC"),
     alertId: z.string().uuid().nullish(),
     question: z.string().optional(),
   })
@@ -1468,6 +1473,34 @@ const DiagnosisOutput = z
     citations: z.array(
       z.object({ path: z.string(), label: z.string().optional() }).passthrough()
     ),
+    runId: z.string().uuid().optional(),
+    adapter: z.enum(["DETERMINISTIC", "EXTERNAL"]).optional(),
+    scopePortfolioIds: z.array(z.string().uuid()).optional(),
+    generatedAt: z.string().datetime({ offset: true }).optional(),
+    limitations: z.array(z.string()).optional(),
+    evidenceIds: z.array(z.string()).optional(),
+    productionInsight: z.boolean(),
+    status: z.string().optional(),
+  })
+  .passthrough();
+
+const AiInsightRunView = z
+  .object({
+    id: z.string().uuid(),
+    portfolioIds: z.array(z.string().uuid()).optional(),
+    adapter: z.string(),
+    status: z.string(),
+    modelName: z.string().nullish(),
+    asOf: z.string().datetime({ offset: true }),
+    latencyMs: z.number().int().nullish(),
+    promptTokens: z.number().int().nullish(),
+    completionTokens: z.number().int().nullish(),
+    estimatedCostUsd: z.string().nullish(),
+    productionInsight: z.boolean(),
+    limitations: z.array(z.string()).optional(),
+    evidenceIds: z.array(z.string()).optional(),
+    createdAt: z.string().datetime({ offset: true }),
+    errorCode: z.string().nullish(),
   })
   .passthrough();
 
@@ -2142,6 +2175,7 @@ export const schemas = {
   exportScope_Body,
   DiagnoseRequest,
   DiagnosisOutput,
+  AiInsightRunView,
   DividendInconsistency,
   FixedIncomeRedemptionSimRequest,
   FixedIncomeRedemptionSimResponse,

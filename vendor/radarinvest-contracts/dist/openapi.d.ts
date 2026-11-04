@@ -1116,8 +1116,28 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Proxy para radarinvest-ai com grounding montado pela API */
+        /**
+         * Pipeline Inc.13 — grounding pela API + adaptador (DETERMINISTIC default)
+         * @description portfolioIds obrigatório (≥1). Adapter DETERMINISTIC é o caminho testável (productionInsight=false). EXTERNAL exige AI_ALLOW_EXTERNAL=1 e credencial; sem isso retorna 503 explícito — nunca sucesso simulado no produto.
+         */
         post: operations["diagnose"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Histórico de insights do usuário (sem segredos) */
+        get: operations["listAiInsights"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1448,6 +1468,23 @@ export interface paths {
         };
         /** Painel de capacidades (enabled ≠ homologated) */
         get: operations["listAdminCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/ai/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Histórico de execuções IA (sem segredos; tokens/custo estimado se houver) */
+        get: operations["listAdminAiRuns"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2958,11 +2995,22 @@ export interface components {
             downloadUrl?: string | null;
         };
         DiagnoseRequest: {
-            /** Format: uuid */
-            portfolioId: string;
+            /** @description Escopo explícito (single/subset/all). Sem fallback para primeira carteira. */
+            portfolioIds: string[];
+            /**
+             * Format: uuid
+             * @deprecated
+             * @description Legado — se enviado sozinho, tratado como portfolioIds=[id]
+             */
+            portfolioId?: string;
+            /**
+             * @default DETERMINISTIC
+             * @enum {string}
+             */
+            adapter: "DETERMINISTIC" | "EXTERNAL";
             /** Format: uuid */
             alertId?: string | null;
-            /** @description Pergunta do usuário (sem PII desnecessária) */
+            /** @description Pergunta do usuário (sem PII desnecessária; tratado como dado, não instrução) */
             question?: string;
         };
         DiagnosisOutput: {
@@ -2972,10 +3020,42 @@ export interface components {
             disclaimers: string[];
             forbiddenTermsHit: boolean;
             citations: {
-                /** @description JSON path no grounding */
+                /** @description JSON path no grounding ou evidence id */
                 path: string;
                 label?: string;
             }[];
+            /** Format: uuid */
+            runId?: string;
+            /** @enum {string} */
+            adapter?: "DETERMINISTIC" | "EXTERNAL";
+            scopePortfolioIds?: string[];
+            /** Format: date-time */
+            generatedAt?: string;
+            limitations?: string[];
+            evidenceIds?: string[];
+            /** @description false para DETERMINISTIC / teste; true só após validação externa autorizada */
+            productionInsight: boolean;
+            status?: string;
+        };
+        AiInsightRunView: {
+            /** Format: uuid */
+            id: string;
+            portfolioIds?: string[];
+            adapter: string;
+            status: string;
+            modelName?: string | null;
+            /** Format: date-time */
+            asOf: string;
+            latencyMs?: number | null;
+            promptTokens?: number | null;
+            completionTokens?: number | null;
+            estimatedCostUsd?: string | null;
+            productionInsight: boolean;
+            limitations?: string[];
+            evidenceIds?: string[];
+            /** Format: date-time */
+            createdAt: string;
+            errorCode?: string | null;
         };
         DividendInconsistency: {
             ticker: string;
@@ -5304,6 +5384,28 @@ export interface operations {
             };
         };
     };
+    listAiInsights: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiInsightRunView"][];
+                };
+            };
+        };
+    };
     listDividendInconsistencies: {
         parameters: {
             query?: never;
@@ -5744,6 +5846,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminCapabilityStatus"][];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listAdminAiRuns: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiInsightRunView"][];
                 };
             };
             403: components["responses"]["Forbidden"];

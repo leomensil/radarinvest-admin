@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: RadarInvest API
-  version: 0.8.33
+  version: 0.8.34
   description: >
     Contrato canônico Core (MVP). Implementado por radarinvest-api.
     Decimal monetário como string. Provenance obrigatória em métricas (BR-010).
@@ -1508,7 +1508,11 @@ paths:
     post:
       tags: [ai]
       operationId: diagnose
-      summary: Proxy para radarinvest-ai com grounding montado pela API
+      summary: Pipeline Inc.13 — grounding pela API + adaptador (DETERMINISTIC default)
+      description: >
+        portfolioIds obrigatório (≥1). Adapter DETERMINISTIC é o caminho testável
+        (productionInsight=false). EXTERNAL exige AI_ALLOW_EXTERNAL=1 e credencial;
+        sem isso retorna 503 explícito — nunca sucesso simulado no produto.
       requestBody:
         required: true
         content:
@@ -1530,6 +1534,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /ai/insights:
+    get:
+      tags: [ai]
+      operationId: listAiInsights
+      summary: Histórico de insights do usuário (sem segredos)
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AiInsightRunView"
 
   /portfolios/{portfolioId}/dividends/inconsistencies:
     parameters:
@@ -1890,6 +1916,30 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/AdminCapabilityStatus"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/ai/runs:
+    get:
+      tags: [admin]
+      operationId: listAdminAiRuns
+      summary: Histórico de execuções IA (sem segredos; tokens/custo estimado se houver)
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AiInsightRunView"
         "403":
           $ref: "#/components/responses/Forbidden"
   /admin/audit:
@@ -4919,21 +4969,34 @@ components:
           nullable: true
     DiagnoseRequest:
       type: object
-      required: [portfolioId]
+      required: [portfolioIds]
       properties:
+        portfolioIds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+          description: Escopo explícito (single/subset/all). Sem fallback para primeira carteira.
         portfolioId:
           type: string
           format: uuid
+          deprecated: true
+          description: Legado — se enviado sozinho, tratado como portfolioIds=[id]
+        adapter:
+          type: string
+          enum: [DETERMINISTIC, EXTERNAL]
+          default: DETERMINISTIC
         alertId:
           type: string
           format: uuid
           nullable: true
         question:
           type: string
-          description: Pergunta do usuário (sem PII desnecessária)
+          description: Pergunta do usuário (sem PII desnecessária; tratado como dado, não instrução)
     DiagnosisOutput:
       type: object
-      required: [fact, rationale, guidance, disclaimers, forbiddenTermsHit, citations]
+      required: [fact, rationale, guidance, disclaimers, forbiddenTermsHit, citations, productionInsight]
       properties:
         fact:
           type: string
@@ -4955,9 +5018,86 @@ components:
             properties:
               path:
                 type: string
-                description: JSON path no grounding
+                description: JSON path no grounding ou evidence id
               label:
                 type: string
+        runId:
+          type: string
+          format: uuid
+        adapter:
+          type: string
+          enum: [DETERMINISTIC, EXTERNAL]
+        scopePortfolioIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        generatedAt:
+          type: string
+          format: date-time
+        limitations:
+          type: array
+          items:
+            type: string
+        evidenceIds:
+          type: array
+          items:
+            type: string
+        productionInsight:
+          type: boolean
+          description: false para DETERMINISTIC / teste; true só após validação externa autorizada
+        status:
+          type: string
+    AiInsightRunView:
+      type: object
+      required: [id, adapter, status, asOf, productionInsight, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        portfolioIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        adapter:
+          type: string
+        status:
+          type: string
+        modelName:
+          type: string
+          nullable: true
+        asOf:
+          type: string
+          format: date-time
+        latencyMs:
+          type: integer
+          nullable: true
+        promptTokens:
+          type: integer
+          nullable: true
+        completionTokens:
+          type: integer
+          nullable: true
+        estimatedCostUsd:
+          type: string
+          nullable: true
+        productionInsight:
+          type: boolean
+        limitations:
+          type: array
+          items:
+            type: string
+        evidenceIds:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        errorCode:
+          type: string
+          nullable: true
     DividendInconsistency:
       type: object
       required: [ticker, code, message, severity]

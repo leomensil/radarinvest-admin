@@ -117,6 +117,7 @@ export declare const schemas: {
   exportScope_Body: z.ZodTypeAny;
   DiagnoseRequest: z.ZodTypeAny;
   DiagnosisOutput: z.ZodTypeAny;
+  AiInsightRunView: z.ZodTypeAny;
   DividendInconsistency: z.ZodTypeAny;
   FixedIncomeRedemptionSimRequest: z.ZodTypeAny;
   FixedIncomeRedemptionSimResponse: z.ZodTypeAny;
