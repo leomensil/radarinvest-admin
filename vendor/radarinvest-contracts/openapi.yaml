@@ -1,0 +1,5879 @@
+openapi: 3.1.0
+info:
+  title: RadarInvest API
+  version: 0.8.32
+  description: >
+    Contrato canônico Core (MVP). Implementado por radarinvest-api.
+    Decimal monetário como string. Provenance obrigatória em métricas (BR-010).
+    CSV/XLSX canônico de import (RF04): Ticker;Evento;Quantidade;Preço;Custos;Data;Instituição
+    (C/V, números BR, data DD/MM/AAAA). Legado EN: ticker,eventType,...,tradeDate[,custodian].
+servers:
+  - url: https://api.radarinvest.app.br
+    description: production
+  - url: http://localhost:3001
+    description: local
+tags:
+  - name: health
+  - name: auth
+  - name: billing
+  - name: portfolios
+  - name: transactions
+  - name: positions
+  - name: imports
+  - name: assets
+  - name: institutions
+  - name: dividends
+  - name: valuation
+  - name: radar
+  - name: suitability
+  - name: gates
+  - name: export
+  - name: treasury
+  - name: fixed-income
+  - name: tax
+  - name: risk
+  - name: options
+  - name: allocation
+  - name: watchlist
+  - name: market
+  - name: privacy
+  - name: ai
+  - name: admin
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      security: []
+      operationId: getHealthz
+      summary: Healthcheck simples
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /health/liveness:
+    get:
+      tags: [health]
+      security: []
+      operationId: getLiveness
+      responses:
+        "200":
+          description: Alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /health/readiness:
+    get:
+      tags: [health]
+      security: []
+      operationId: getReadiness
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /auth/register:
+    post:
+      tags: [auth]
+      security: []
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokens"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /auth/login:
+    post:
+      tags: [auth]
+      security: []
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokens"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /auth/refresh:
+    post:
+      tags: [auth]
+      security: []
+      operationId: refresh
+      summary: Refresh via cookie HttpOnly (corpo opcional)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokens"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /me:
+    get:
+      tags: [auth]
+      operationId: getMe
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /billing/status:
+    get:
+      tags: [billing]
+      operationId: getBillingStatus
+      responses:
+        "200":
+          description: Trial/subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingStatus"
+
+  /portfolios:
+    get:
+      tags: [portfolios]
+      operationId: listPortfolios
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Portfolio"
+    post:
+      tags: [portfolios]
+      operationId: createPortfolio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PortfolioCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Portfolio"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /me/wealth:
+    get:
+      tags: [portfolios]
+      operationId: getUserConsolidatedWealth
+      summary: Patrimônio consolidado do escopo selecionado (RF41)
+      description: |
+        Escopo via `portfolioIds`: omitido = todas as carteiras do usuário;
+        array vazio = 422 ERR_PORTFOLIO_SCOPE_EMPTY; duplicados são deduplicados;
+        id não autorizado/inexistente = 404. Não interpreta lista vazia como "todas".
+      parameters:
+        - $ref: "#/components/parameters/PortfolioIds"
+        - name: includeSeries
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: Quando false (padrão), não calcula série histórica (resposta com series vazia).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserConsolidatedWealth"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+
+  /me/returns:
+    get:
+      tags: [portfolios]
+      operationId: getUserScopedReturns
+      summary: Rentabilidade TWR/MWRR do escopo (RF47 / BR-022 / BR-227)
+      description: |
+        Recalcula no perímetro single/subset/all. Não média de %.
+        `mwrrSimplePercent` ≠ TIR; TIR em `mwrrIrrPercent`.
+        Mesmo `portfolioIds` que `/me/wealth`.
+      parameters:
+        - $ref: "#/components/parameters/PortfolioIds"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScopedPortfolioReturns"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /me/positions:
+    get:
+      tags: [positions]
+      operationId: listScopedEnrichedPositions
+      summary: Posições agregadas do escopo com breakdown por carteira (RF41)
+      parameters:
+        - $ref: "#/components/parameters/PortfolioIds"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScopedPositionsResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /me/reconcile:
+    post:
+      tags: [transactions]
+      operationId: reconcileScopedPortfolios
+      summary: Conciliação em lote do escopo (um job por carteira)
+      description: |
+        Enfileira reconcile individual por carteira do escopo. Falha ao aceitar
+        um job não cancela os demais já aceitos (falhas parciais em `failed`).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                portfolioIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: Omitido = todas; [] = 422 ERR_PORTFOLIO_SCOPE_EMPTY
+      responses:
+        "202":
+          description: Accepted (jobs criados; ver failed para rejeições parciais)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScopedReconcileResult"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /portfolios/{portfolioId}/reconcile:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    post:
+      tags: [transactions]
+      operationId: reconcilePortfolio
+      summary: Dispara conciliação assíncrona do livro-razão com relatório de divergências
+      responses:
+        "202":
+          description: Accepted (Job de conciliação criado)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobId, status]
+                properties:
+                  jobId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [pending, processing, completed, failed, interrupted]
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Conflito (já existe conciliação em processamento para esta carteira)
+
+  /portfolios/{portfolioId}/reconcile/jobs/{jobId}:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: jobId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [transactions]
+      operationId: getReconcileJob
+      summary: Consulta status e relatório de job de conciliação
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, portfolioId, status, createdAt]
+                properties:
+                  id:
+                    type: string
+                  portfolioId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [pending, processing, completed, failed, interrupted]
+                  createdAt:
+                    type: string
+                  completedAt:
+                    type: string
+                  error:
+                    type: string
+                  report:
+                    type: object
+        "404":
+          description: Job não encontrado
+
+  /portfolios/{portfolioId}/transfers:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    post:
+      tags: [transactions]
+      operationId: createPortfolioTransfer
+      summary: Transferência entre carteiras do usuário (RF40)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PortfolioTransferCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioTransferResult"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /portfolios/{portfolioId}/transactions:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [transactions]
+      operationId: listTransactions
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Transaction"
+    post:
+      tags: [transactions]
+      operationId: createTransaction
+      summary: Append ledger event (BR-002)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransactionCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /portfolios/{portfolioId}/transactions/{transactionId}:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - $ref: "#/components/parameters/TransactionId"
+    patch:
+      tags: [transactions]
+      operationId: updateTransaction
+      summary: Edit ledger event (BR-002); recomputa posição do ativo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransactionUpdate"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [transactions]
+      operationId: deleteTransaction
+      summary: Hard delete ledger event when replay remains valid (BR-002)
+      responses:
+        "204":
+          description: Deleted
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /portfolios/{portfolioId}/transactions/{transactionId}/move:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - $ref: "#/components/parameters/TransactionId"
+    post:
+      tags: [transactions]
+      operationId: moveTransaction
+      summary: Relocate event to another portfolio of the same user (≠ RF40)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransactionMove"
+      responses:
+        "200":
+          description: Moved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /portfolios/{portfolioId}/positions:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [positions]
+      operationId: listPositions
+      responses:
+        "200":
+          description: Derived positions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Position"
+
+  /portfolios/{portfolioId}/assets/{ticker}/custody:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - $ref: "#/components/parameters/Ticker"
+      - name: asOf
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: Data de corte (inclusive). Omitido = hoje.
+    get:
+      tags: [positions]
+      operationId: listAssetCustody
+      summary: Saldo por IF do ativo (replayCustody, BR-006/BR-047)
+      responses:
+        "200":
+          description: IFs com quantidade > 0
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AssetCustodyBucket"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /portfolios/{portfolioId}/returns:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [positions]
+      operationId: getPortfolioReturns
+      summary: TWR e MWRR segregados (BR-022)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioReturns"
+
+  /portfolios/{portfolioId}/wealth:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [positions]
+      operationId: getPortfolioWealth
+      summary: Consolidação patrimonial e série (RF38)
+      parameters:
+        - name: includeSeries
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: Quando false (padrão), não calcula série histórica (resposta com series vazia).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioWealth"
+
+  /portfolios/{portfolioId}/imports:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    post:
+      tags: [imports]
+      operationId: createImportJob
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [kind, file]
+              properties:
+                kind:
+                  type: string
+                  enum: [SINACOR_PDF, CSV, XLSX]
+                ledgerMode:
+                  type: string
+                  enum: [historical, initial_position]
+                  description: historical = movimentações; initial_position = snapshot no fechamento da sessão de cutDate (calendário/fuso do domínio; não 23:59:59.999Z)
+                cutDate:
+                  type: string
+                  format: date
+                  description: Data civil YYYY-MM-DD do fechamento da sessão (obrigatório se ledgerMode=initial_position). Comparação tradeDate <= cutDate; sem conversão a instante UTC.
+                confirmEmbeddedHistory:
+                  type: string
+                  description: Não autoriza merge. Histórico com tradeDate <= cutDate no mesmo ativo responde 422 CONFLICT_EMBEDDED_HISTORY (manter snapshot XOR reconstruir pelo histórico). True não soma nem substitui.
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+
+  /portfolios/{portfolioId}/imports/{jobId}:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - $ref: "#/components/parameters/JobId"
+    get:
+      tags: [imports]
+      operationId: getImportJob
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+
+  /portfolios/{portfolioId}/imports/{jobId}/map:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [imports]
+      operationId: mapImportJob
+      summary: Aplica mapeamento de colunas e gera preview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportColumnMappingRequest"
+      responses:
+        "200":
+          description: Preview gerado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /portfolios/{portfolioId}/imports/{jobId}/commit:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [imports]
+      operationId: commitImportJob
+      responses:
+        "200":
+          description: Committed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /institutions/b3:
+    get:
+      tags: [institutions]
+      operationId: searchB3Institutions
+      summary: Busca IFs ativas do catálogo B3 (AD-025)
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Trecho de code ou name (case-insensitive)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FinancialInstitution"
+
+  /assets/search:
+    get:
+      tags: [assets]
+      operationId: searchAssets
+      summary: Autocomplete ticker (mín. 3 caracteres)
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: assetClass
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AssetClass"
+          description: Quando informado, restringe resultados à classe
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AssetSearchHit"
+
+  /assets/compare:
+    get:
+      tags: [assets]
+      operationId: compareAssets
+      summary: Comparativo mesma classe (RF43)
+      parameters:
+        - name: tickers
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetCompareResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /assets/{ticker}:
+    parameters:
+      - $ref: "#/components/parameters/Ticker"
+    get:
+      tags: [assets]
+      operationId: getAsset
+      responses:
+        "200":
+          description: Asset sheet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetSheet"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets/{ticker}/closes:
+    parameters:
+      - $ref: "#/components/parameters/Ticker"
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+    get:
+      tags: [assets]
+      operationId: listAssetCloses
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PriceClose"
+
+  /portfolios/{portfolioId}/dividends:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [dividends]
+      operationId: listPortfolioDividends
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DividendView"
+  /portfolios/{portfolioId}/dividends/{dividendId}/receipts:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: dividendId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [dividends]
+      operationId: confirmDividendReceipt
+      summary: Confirma crédito individual na carteira (idempotente)
+      responses:
+        "201":
+          description: Recibo criado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DividendReceipt"
+        "200":
+          description: Recibo já existia (idempotente)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DividendReceipt"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /portfolios/{portfolioId}/yoc:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [dividends]
+      operationId: listYieldOnCost
+      responses:
+        "200":
+          description: YoC por ativo
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/YieldOnCost"
+
+  /portfolios/{portfolioId}/dividends/seasonality:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [dividends]
+      operationId: getDividendSeasonality
+      summary: Matriz mês × ticker de proventos creditados (RF12)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DividendSeasonality"
+
+  /portfolios/{portfolioId}/dividends/projection:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [dividends]
+      operationId: getDividendProjection
+      summary: Projeção a partir de proventos ANNOUNCED (RF13 / BR-103)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DividendProjection"
+
+  /market/ettj/nss/latest:
+    get:
+      tags: [market]
+      operationId: getLatestEttjNss
+      summary: Parâmetros NSS ANBIMA mais recentes (curva curada)
+      parameters:
+        - name: curveKind
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/EttjCurveKind"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EttjNssView"
+        "404":
+          description: Série ausente
+
+  /portfolios/{portfolioId}/treasury:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [treasury]
+      operationId: listTreasuryPositions
+      summary: Visão legada agregado (espécies não migradas) + dual PU (RF26 / BR-023)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TreasuryView"
+
+  /portfolios/{portfolioId}/treasury/lots:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [treasury]
+      operationId: listTreasuryLots
+      summary: Lotes Tesouro (PREFIXADO_ZERO §6a / SELIC §6b / IPCA_PLUS §6c)
+      parameters:
+        - name: asOf
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TreasuryLot"
+    post:
+      tags: [treasury]
+      operationId: createTreasuryLot
+      summary: Compra lote PREFIXADO_ZERO, SELIC ou IPCA_PLUS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TreasuryLotCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryLot"
+        "422":
+          description: >
+            Validação; UNSUPPORTED_TREASURY_SPECIES (espécie fora do corte);
+            UNSUPPORTED_TREASURY_COUPON_RATE;
+            UNSUPPORTED_TREASURY_COUPON_CALENDAR;
+            UNSUPPORTED_TREASURY_AMORT_CALENDAR;
+            UNSUPPORTED_CDB_CONVENTION (ipcaLagMonths / emissão casada CDB no
+            POST Tesouro — não é UNSUPPORTED_CONVENTION do módulo bancário).
+
+  /portfolios/{portfolioId}/treasury/lots/{lotId}:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: lotId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [treasury]
+      operationId: getTreasuryLot
+      summary: Detalhe do lote com avaliações
+      parameters:
+        - name: asOf
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryLot"
+        "404":
+          description: Not found
+
+  /portfolios/{portfolioId}/treasury/lots/{lotId}/redemptions:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: lotId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [treasury]
+      operationId: redeemTreasuryLot
+      summary: Resgate parcial ou total do lote (lotId explícito)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TreasuryLotRedeem"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryLot"
+        "422":
+          description: Quantidade / status
+
+  /portfolios/{portfolioId}/treasury/lots/{lotId}/settlements:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: lotId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [treasury]
+      operationId: settleTreasuryLot
+      summary: Liquidação confirmada no/após vencimento
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TreasuryLotSettle"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryLot"
+        "422":
+          description: >
+            Antes do vencimento / já liquidado.
+            SETTLE.grossReceived = principal informado apenas (NTN-F/NTN-B cupom:
+            cupom de vencimento é POST de recibo, não este body). Pagamento
+            combinado não suportado — o valor não é decomposto.
+            RENDA_MAIS / EDUCA_MAIS → 422 UNSUPPORTED_TREASURY_SETTLE_MODE
+            (amortização mensal própria, não SETTLE NTN-F).
+
+  /portfolios/{portfolioId}/treasury/lots/{lotId}/coupons:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: lotId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [treasury]
+      operationId: listTreasuryLotCoupons
+      summary: Agenda contratual e direitos/recibos do lote NTN-F
+      parameters:
+        - name: asOf
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Agenda
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryCouponAgenda"
+  /portfolios/{portfolioId}/treasury/lots/{lotId}/coupons/{nominalDate}/receipts:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: lotId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: nominalDate
+        in: path
+        required: true
+        schema:
+          type: string
+          format: date
+    post:
+      tags: [treasury]
+      operationId: confirmTreasuryCouponReceipt
+      summary: Confirma recebimento de cupom (caixa = grossReceived informado)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TreasuryCouponReceiptCreate"
+      responses:
+        "201":
+          description: Creditado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryCouponReceipt"
+        "200":
+          description: Idempotente (mesmo grossReceived)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryCouponReceipt"
+        "403":
+          description: ERR_TRIAL_EXPIRED_READ_ONLY (Modo Consulta)
+        "422":
+          description: >
+            COUPON_RECEIPT_ALREADY_CREDITED (valor diferente);
+            cupom não elegível; espécie incorrecta.
+
+  /portfolios/{portfolioId}/treasury/lots/{lotId}/amortizations:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: lotId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [treasury]
+      operationId: listTreasuryLotAmortizations
+      summary: Agenda contratual de amortizações RendA+ (n=240)
+      parameters:
+        - name: asOf
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Agenda
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryAmortizationAgenda"
+        "422":
+          description: espécie sem amortização mensal NTN-B1 deste corte
+  /portfolios/{portfolioId}/treasury/lots/{lotId}/amortizations/{installmentIndex}/receipts:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: lotId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: installmentIndex
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 240
+    post:
+      tags: [treasury]
+      operationId: confirmTreasuryAmortizationReceipt
+      summary: Confirma recebimento de amortização RendA+ (caixa = grossReceived)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TreasuryAmortizationReceiptCreate"
+      responses:
+        "201":
+          description: Creditado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryAmortizationReceipt"
+        "200":
+          description: Idempotente (mesmo grossReceived)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryAmortizationReceipt"
+        "403":
+          description: ERR_TRIAL_EXPIRED_READ_ONLY (Modo Consulta)
+        "422":
+          description: >
+            AMORT_RECEIPT_ALREADY_CREDITED; parcela não elegível;
+            VNI incompleto; espécie incorrecta.
+
+  /portfolios/{portfolioId}/fixed-income-contracts:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [fixed-income]
+      operationId: listFixedIncomeContracts
+      summary: Lista contratos CDB/LCI/LCA da carteira (carrego PRE)
+      parameters:
+        - name: asOf
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FixedIncomeContract"
+    post:
+      tags: [fixed-income]
+      operationId: createFixedIncomeContract
+      summary: Abre contrato prefixado e aplica (débito do principal informado)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FixedIncomeContractCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FixedIncomeContract"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /portfolios/{portfolioId}/fixed-income-contracts/{contractId}:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: contractId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [fixed-income]
+      operationId: getFixedIncomeContract
+      parameters:
+        - name: asOf
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FixedIncomeContract"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /portfolios/{portfolioId}/fixed-income-contracts/{contractId}/redemptions:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: contractId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [fixed-income]
+      operationId: redeemFixedIncomeContract
+      summary: Resgate parcial ou total (caixa = grossReceived informado)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FixedIncomeRedemptionCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FixedIncomeContract"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /portfolios/{portfolioId}/fixed-income-contracts/{contractId}/settlements:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: contractId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [fixed-income]
+      operationId: settleFixedIncomeContract
+      summary: Liquidação confirmada (não automática na data de vencimento)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FixedIncomeSettlementCreate"
+      responses:
+        "201":
+          description: Settled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FixedIncomeContract"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /valuation/ceiling-price:
+    post:
+      tags: [valuation]
+      operationId: computeCeilingPrice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CeilingPriceRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CeilingPriceResponse"
+
+  /radar/alerts:
+    get:
+      tags: [radar]
+      operationId: listAlerts
+      parameters:
+        - name: taxonomy
+          in: query
+          schema:
+            $ref: "#/components/schemas/AlertTaxonomy"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Alert"
+
+  /me/suitability:
+    get:
+      tags: [suitability]
+      operationId: getSuitability
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuitabilityProfile"
+    put:
+      tags: [suitability]
+      operationId: putSuitability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SuitabilityProfile"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuitabilityProfile"
+
+  /feature-gates:
+    get:
+      tags: [gates]
+      operationId: listFeatureGates
+      responses:
+        "200":
+          description: Gates efetivos do usuário
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FeatureGate"
+
+  /portfolios/{portfolioId}/export:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: format
+        in: query
+        required: true
+        schema:
+          type: string
+          enum: [CSV, XLSX, PDF]
+          description: XLS (BIFF8) não é valor válido; clientes que enviem XLS recebem 422 UNSUPPORTED_LEGACY_XLS
+    post:
+      tags: [export]
+      operationId: exportPortfolio
+      summary: Exporta uma carteira (CSV/XLSX de custódia; PDF legado do contrato)
+      description: >
+        CSV/XLSX incluem INITIAL_POSITION e costKnown; avgCost/PnL vazios se custo desconhecido.
+        format não enumerado (incl. XLS) → 422 UNSUPPORTED_LEGACY_XLS.
+      responses:
+        "202":
+          description: Export job started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportJob"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /exports:
+    post:
+      tags: [export]
+      operationId: exportScope
+      summary: Exporta um escopo explícito de carteiras (CSV ou XLSX)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [format, portfolioIds]
+              properties:
+                format:
+                  type: string
+                  enum: [CSV, XLSX]
+                portfolioIds:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    format: uuid
+                  description: Lista explícita; MUST NOT inferir a primeira carteira
+      responses:
+        "202":
+          description: Export job started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportJob"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /export/jobs/{jobId}:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    get:
+      tags: [export]
+      operationId: getExportJob
+      summary: Status e URL de download do export
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportJob"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /me/portability:
+    post:
+      tags: [export]
+      operationId: requestPortability
+      summary: LGPD machine-readable export
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportJob"
+
+  /ai/diagnose:
+    post:
+      tags: [ai]
+      operationId: diagnose
+      summary: Proxy para radarinvest-ai com grounding montado pela API
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiagnoseRequest"
+      responses:
+        "200":
+          description: Structured diagnosis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosisOutput"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          description: AI unavailable — client should show fallback
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /portfolios/{portfolioId}/dividends/inconsistencies:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [dividends]
+      operationId: listDividendInconsistencies
+      summary: Monitor de inconsistências de proventos (RF14)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DividendInconsistency"
+
+  /tax/fixed-income/redemption-sim:
+    post:
+      tags: [tax]
+      operationId: simulateFixedIncomeRedemption
+      summary: Simulador de resgate RF (RF15)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FixedIncomeRedemptionSimRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FixedIncomeRedemptionSimResponse"
+
+  /portfolios/{portfolioId}/tax/equity-gains:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: yearMonth
+        in: query
+        required: true
+        schema:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}$"
+          description: Competência AAAA-MM
+    get:
+      tags: [tax]
+      operationId: getEquityGains
+      summary: Ganhos líquidos ações com isenção R$ 20k (RF16 / BR-030)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EquityGainsResponse"
+
+  /portfolios/{portfolioId}/treasury/history:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: days
+        in: query
+        schema:
+          type: integer
+          default: 90
+    get:
+      tags: [treasury]
+      operationId: getTreasuryHistory
+      summary: Série PU mercado vs carrego (RF26)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryHistoryResponse"
+
+  /portfolios/{portfolioId}/treasury/duration:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [treasury]
+      operationId: listTreasuryDuration
+      summary: Duration / sensibilidade de posições Tesouro (RF27)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TreasuryDurationView"
+
+  /portfolios/{portfolioId}/allocation/suggestion:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    post:
+      tags: [allocation]
+      operationId: suggestAllocation
+      summary: Aportes inteligentes (RF33)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AllocationSuggestionRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AllocationSuggestionResponse"
+
+  /portfolios/{portfolioId}/watchlist:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [watchlist]
+      operationId: listWatchlist
+      summary: Watchlist do portfólio (RF21 camada 2)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WatchlistItem"
+    post:
+      tags: [watchlist]
+      operationId: addWatchlistItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticker]
+              properties:
+                ticker:
+                  type: string
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchlistItem"
+
+  /portfolios/{portfolioId}/watchlist/{ticker}:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+      - name: ticker
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [watchlist]
+      operationId: removeWatchlistItem
+      responses:
+        "204":
+          description: Removed
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /radar/scan:
+    post:
+      tags: [radar]
+      operationId: runRadarScan
+      summary: Dispara scan determinístico (também usado pelo job D+1)
+      responses:
+        "202":
+          description: Scan accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [emitted]
+                properties:
+                  emitted:
+                    type: integer
+
+  /export/jobs/{jobId}/download:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    get:
+      tags: [export]
+      operationId: downloadExportJob
+      summary: Download binário do export (CSV/XLSX/PDF/JSON)
+      responses:
+        "200":
+          description: File bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /market/closes:
+    post:
+      tags: [market]
+      operationId: upsertMarketCloses
+      summary: Ingestão idempotente de closes D+0 (BR-011)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketClosesIngestRequest"
+      responses:
+        "200":
+          description: Upserted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [upserted]
+                properties:
+                  upserted:
+                    type: integer
+
+  /me/privacy/erase:
+    post:
+      tags: [privacy]
+      operationId: requestPrivacyErase
+      summary: Expurgo LGPD (BR-200 / RNF06) — soft-delete + janela
+      responses:
+        "202":
+          description: Erasure scheduled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyEraseResponse"
+
+  /portfolios/{portfolioId}/risk/metrics:
+    get:
+      tags: [risk]
+      operationId: getPortfolioRiskMetrics
+      summary: Volatilidade anualizada e max drawdown (closes diários; cobertura mínima)
+      description: >
+        Núcleo Inc.10 — retornos de preço close. RF a carrego fora (NOT_COMPARABLE_CARRY).
+        Mínimo 30 retornos diários. Sem extrapolação.
+      parameters:
+        - $ref: "#/components/parameters/PortfolioId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioRiskMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /portfolios/{portfolioId}/risk/markowitz:
+    get:
+      tags: [risk]
+      operationId: getPortfolioMarkowitz
+      summary: Fronteira Markowitz, min var, max Sharpe, beta, correlação
+      description: >
+        Requer ≥31 closes comuns entre ativos listados. Sem inventar série.
+        Premissas e limitações no payload quando status ≠ OK.
+      parameters:
+        - $ref: "#/components/parameters/PortfolioId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioRiskResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /portfolios/{portfolioId}/options/panel:
+    get:
+      tags: [options]
+      operationId: getOptionsPanel
+      summary: Painel de opções lastreadas (gregas, IV, payoff)
+      parameters:
+        - $ref: "#/components/parameters/PortfolioId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OptionPanelResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /portfolios/{portfolioId}/tax/apuration:
+    get:
+      tags: [tax]
+      operationId: getTaxApuration
+      summary: Apuração multimodalidade + DARF 6015
+      parameters:
+        - $ref: "#/components/parameters/PortfolioId"
+        - name: yearMonth
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9]{4}-[0-9]{2}$"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxApurationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/ops/overview:
+    get:
+      tags: [admin]
+      operationId: getAdminOpsOverview
+      summary: Visão operacional (fontes, jobs recentes, audit; cron prod off)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminOpsOverview"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/capabilities:
+    get:
+      tags: [admin]
+      operationId: listAdminCapabilities
+      summary: Painel de capacidades (enabled ≠ homologated)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminCapabilityStatus"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/audit:
+    get:
+      tags: [admin]
+      operationId: listAdminAudit
+      summary: Trilha de auditoria administrativa (segredos redacted)
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminAuditEntry"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/data-sources:
+    get:
+      tags: [admin]
+      operationId: listAdminDataSources
+      summary: Lista fontes de dados (credenciais mascaradas)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminDataSourceView"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [admin]
+      operationId: createAdminDataSource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminDataSourceUpsert"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminDataSourceView"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/data-sources/{sourceId}:
+    patch:
+      tags: [admin]
+      operationId: updateAdminDataSource
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminDataSourceUpsert"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminDataSourceView"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /admin/data-sources/{sourceId}/test:
+    post:
+      tags: [admin]
+      operationId: testAdminDataSource
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Resultado do teste
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminConnectionTestResult"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /admin/feature-matrix:
+    get:
+      tags: [admin]
+      operationId: getAdminFeatureMatrix
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminFeatureRoutingView"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [admin]
+      operationId: updateAdminFeatureMatrix
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/AdminFeatureRoutingUpdate"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminFeatureRoutingView"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/series-ingest/runs:
+    get:
+      tags: [admin]
+      operationId: listAdminSeriesIngestRuns
+      summary: Lista corridas de ingestão de séries (SUPER_ADMIN)
+      parameters:
+        - name: capability
+          in: query
+          schema:
+            type: string
+            enum: [CDI, IPCA, SELIC, TREASURY_PU, ETTJ, IPCA_PROJ, LISTED_CLOSE]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SeriesIngestRunView"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [admin]
+      operationId: triggerAdminSeriesIngest
+      summary: Dispara uma coleta (dev/teste). Agendamento de produção permanece desligado.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SeriesIngestTriggerRequest"
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesIngestRunView"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Corrida RUNNING da mesma capacidade
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /admin/users:
+    get:
+      tags: [admin]
+      operationId: listAdminUsers
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminUserView"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/users/{userId}:
+    patch:
+      tags: [admin]
+      operationId: updateAdminUser
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUserPatch"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserView"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /admin/subscriptions:
+    get:
+      tags: [admin]
+      operationId: listAdminSubscriptions
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminSubscriptionView"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/subscriptions/{subscriptionId}:
+    patch:
+      tags: [admin]
+      operationId: updateAdminSubscription
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminSubscriptionPatch"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSubscriptionView"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /admin/observability:
+    get:
+      tags: [admin]
+      operationId: getAdminObservability
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminObservabilitySnapshot"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    PortfolioIds:
+      name: portfolioIds
+      in: query
+      required: false
+      style: form
+      explode: true
+      schema:
+        type: array
+        items:
+          type: string
+          format: uuid
+      description: |
+        Escopo de carteiras. Omitido = todas do usuário. Array vazio = 422 ERR_PORTFOLIO_SCOPE_EMPTY.
+        Duplicados são deduplicados. Id de outro usuário ou inexistente = 404.
+    PortfolioId:
+      name: portfolioId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TransactionId:
+      name: transactionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Ticker:
+      name: ticker
+      in: path
+      required: true
+      schema:
+        type: string
+        examples: [VALE3]
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: Forbidden (trial/gates/RBAC)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    Decimal:
+      type: string
+      description: >
+        Decimal como string (BR-005). Persistência NUMERIC(18,8) ROUND_HALF_UP.
+        JSON pode omitir zeros à direita; o contrato é equivalência numérica até 8 casas.
+        Serialização não arredonda abaixo de 8 casas nem oculta diferença nessa escala.
+      examples: ["62.10000000", "7000"]
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    ReadinessResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        checks:
+          type: object
+          additionalProperties:
+            type: boolean
+    ErrorEnvelope:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code:
+          type: string
+          description: >
+            Inclui códigos de custódia em SELL/transfer sem IF (BR-047):
+            ERR_CUSTODY_AMBIGUOUS (≥2 IFs elegíveis — exigir seleção),
+            ERR_CUSTODY_SPLIT_REQUIRED (saldo total cobre mas nenhuma IF isolada),
+            ERR_CUSTODY_INSUFFICIENT_TOTAL (soma das IFs < quantidade).
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              issue:
+                type: string
+        requestId:
+          type: string
+          format: uuid
+    Provenance:
+      type: object
+      required: [source, capturedAt, integrityIndex]
+      properties:
+        source:
+          type: string
+        capturedAt:
+          type: string
+          format: date-time
+        integrityIndex:
+          type: number
+          minimum: 0
+          maximum: 1
+    RegisterRequest:
+      type: object
+      required: [email, password, name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        name:
+          type: string
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    AuthTokens:
+      type: object
+      required: [accessToken, tokenType, expiresIn]
+      properties:
+        accessToken:
+          type: string
+        tokenType:
+          type: string
+          enum: [Bearer]
+        expiresIn:
+          type: integer
+    User:
+      type: object
+      required: [id, email, name, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum: [USER, AUDITOR, SUPPORT, SUPER_ADMIN]
+        trialEndsAt:
+          type: string
+          format: date-time
+          nullable: true
+    BillingStatus:
+      type: object
+      required: [plan, status, writeEnabled]
+      properties:
+        plan:
+          type: string
+          enum: [CORE, EXPERT]
+        status:
+          type: string
+          enum: [trialing, active, past_due, canceled, expired]
+        writeEnabled:
+          type: boolean
+        trialEndsAt:
+          type: string
+          format: date-time
+          nullable: true
+        exportUntil:
+          type: string
+          format: date-time
+          nullable: true
+    Portfolio:
+      type: object
+      required: [id, name, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    PortfolioCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+    LedgerEventType:
+      type: string
+      enum:
+        [
+          BUY,
+          SELL,
+          BONUS,
+          SPLIT,
+          REVERSE_SPLIT,
+          SUBSCRIPTION,
+          AMORTIZATION,
+          CUSTODY_TRANSFER,
+          PORTFOLIO_TRANSFER_OUT,
+          PORTFOLIO_TRANSFER_IN,
+          INITIAL_POSITION,
+        ]
+    GrossAmountOrigin:
+      type: string
+      enum: [INFORMED, DERIVED]
+      description: INFORMED = total informado; DERIVED = materializado de quantity × unitPrice na escala persistida (8 casas)
+    PortfolioTransferCreate:
+      type: object
+      required: [toPortfolioId, ticker, quantity, tradeDate]
+      properties:
+        toPortfolioId:
+          type: string
+          format: uuid
+        ticker:
+          type: string
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        tradeDate:
+          type: string
+          format: date
+        custodian:
+          type: string
+          description: >
+            Opcional. Omitido → mesma resolução BR-047 que SELL
+            (único/auto, ambíguo, split required, insuficiente total).
+    PortfolioTransferResult:
+      type: object
+      required: [transferPairId, out, in]
+      properties:
+        transferPairId:
+          type: string
+          format: uuid
+        out:
+          $ref: "#/components/schemas/Transaction"
+        in:
+          $ref: "#/components/schemas/Transaction"
+    UserConsolidatedWealth:
+      allOf:
+        - $ref: "#/components/schemas/PortfolioWealth"
+        - type: object
+          required: [portfolioCount, scope]
+          properties:
+            portfolioCount:
+              type: integer
+            scope:
+              $ref: "#/components/schemas/WealthScope"
+            coverage:
+              $ref: "#/components/schemas/WealthCoverage"
+            analyticsUnavailableReason:
+              type: string
+              nullable: true
+              description: |
+                Presente quando TWR/MWRR (ou risco) não são calculados neste escopo.
+                Ex.: CONSOLIDATED_RECALC_PENDING — requisito futuro, não regra permanente.
+    WealthScope:
+      type: object
+      required: [mode, portfolioIds]
+      properties:
+        mode:
+          type: string
+          enum: [single, subset, all]
+        portfolioIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+    WealthCoverage:
+      type: object
+      required: [partialCoverage]
+      properties:
+        quotesAsOf:
+          type: string
+          format: date
+          nullable: true
+        quoteSource:
+          type: string
+          nullable: true
+          description: Fonte da cotação usada na avaliação (ex. B3 close)
+        partialCoverage:
+          type: boolean
+          description: true somente com lacuna real (ex. cotação ausente); datas de início distintas entre carteiras não bastam
+        portfolios:
+          type: array
+          items:
+            type: object
+            required: [portfolioId]
+            properties:
+              portfolioId:
+                type: string
+                format: uuid
+              historyFrom:
+                type: string
+                format: date
+                nullable: true
+                description: Primeira movimentação da carteira (informativo)
+    ScopedPositionsResponse:
+      type: object
+      required: [scope, positions, coverage]
+      properties:
+        scope:
+          $ref: "#/components/schemas/WealthScope"
+        coverage:
+          $ref: "#/components/schemas/WealthCoverage"
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConsolidatedEnrichedPosition"
+    ConsolidatedEnrichedPosition:
+      type: object
+      required: [assetId, ticker, assetClass, quantity, costKnown, breakdown]
+      properties:
+        assetId:
+          type: string
+          format: uuid
+        ticker:
+          type: string
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        costBasis:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Null quando costKnown=false (custo ausente em alguma fatia; não coerce a zero)
+        costKnown:
+          type: boolean
+        avgCost:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: PM consolidado só quando costKnown e quantity > 0
+        marketValue:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        breakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/PortfolioPositionSlice"
+    PortfolioPositionSlice:
+      type: object
+      required: [portfolioId, portfolioName, quantity, costKnown]
+      properties:
+        portfolioId:
+          type: string
+          format: uuid
+        portfolioName:
+          type: string
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        costBasis:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        costKnown:
+          type: boolean
+        marketValue:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+    ScopedReconcileResult:
+      type: object
+      required: [jobs, failed]
+      properties:
+        jobs:
+          type: array
+          items:
+            type: object
+            required: [portfolioId, jobId, status]
+            properties:
+              portfolioId:
+                type: string
+                format: uuid
+              jobId:
+                type: string
+              status:
+                type: string
+                enum: [pending, processing, completed, failed, interrupted]
+        failed:
+          type: array
+          items:
+            type: object
+            required: [portfolioId, error]
+            properties:
+              portfolioId:
+                type: string
+                format: uuid
+              error:
+                type: string
+    Transaction:
+      type: object
+      required: [id, portfolioId, ticker, eventType, quantity, unitPrice, costs, tradeDate]
+      properties:
+        id:
+          type: string
+          format: uuid
+        portfolioId:
+          type: string
+          format: uuid
+        ticker:
+          type: string
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+          description: Classe do ativo no catálogo (join assets)
+        eventType:
+          $ref: "#/components/schemas/LedgerEventType"
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        unitPrice:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Null quando costBasisUnknown (sentinela 0 na persistência nunca é PM)
+        costs:
+          $ref: "#/components/schemas/Decimal"
+        costBasisUnknown:
+          type: boolean
+          description: true em INITIAL_POSITION sem PM; unitPrice 0 não é custo conhecido
+        grossAmount:
+          $ref: "#/components/schemas/Decimal"
+          description: Total bruto antes dos custos. Null em compras legadas.
+        grossAmountOrigin:
+          $ref: "#/components/schemas/GrossAmountOrigin"
+          nullable: true
+        grossAmountScaleWarning:
+          type: string
+          description: Presente quando 0 < |quantize8(q×p) − grossAmount| < 0.01
+        tradeDate:
+          type: string
+          format: date
+        custodian:
+          type: string
+          description: >
+            Rótulo de corretora/custódia (BUY/SELL). Em SELL, se omitido:
+            IF única elegível é inferida; ambígua → ERR_CUSTODY_AMBIGUOUS;
+            distribuída → ERR_CUSTODY_SPLIT_REQUIRED; total insuficiente →
+            ERR_CUSTODY_INSUFFICIENT_TOTAL (BR-047).
+        fromCustodian:
+          type: string
+          description: Origem (CUSTODY_TRANSFER)
+        toCustodian:
+          type: string
+          description: Destino (CUSTODY_TRANSFER)
+        reversesTransactionId:
+          type: string
+          format: uuid
+          description: Estorno append-only referenciando transação original
+    TransactionCreate:
+      type: object
+      required: [ticker, eventType, quantity, unitPrice, tradeDate]
+      properties:
+        ticker:
+          type: string
+        eventType:
+          $ref: "#/components/schemas/LedgerEventType"
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        unitPrice:
+          $ref: "#/components/schemas/Decimal"
+        costs:
+          $ref: "#/components/schemas/Decimal"
+          default: "0"
+        grossAmount:
+          $ref: "#/components/schemas/Decimal"
+          description: Total bruto antes dos custos (BUY/SUBSCRIPTION). Ausente → DERIVED de q×p.
+        grossAmountOrigin:
+          $ref: "#/components/schemas/GrossAmountOrigin"
+        confirmGrossDivergence:
+          type: boolean
+          description: Obrigatório quando |quantize8(q×p) − grossAmount| ≥ 0.01
+        tradeDate:
+          type: string
+          format: date
+        custodian:
+          type: string
+        fromCustodian:
+          type: string
+        toCustodian:
+          type: string
+        reversesTransactionId:
+          type: string
+          format: uuid
+        costBasisUnknown:
+          type: boolean
+          description: Posição inicial sem PM conhecido (não inventa custo zero)
+    TransactionUpdate:
+      type: object
+      properties:
+        ticker:
+          type: string
+        eventType:
+          $ref: "#/components/schemas/LedgerEventType"
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        unitPrice:
+          $ref: "#/components/schemas/Decimal"
+        costs:
+          $ref: "#/components/schemas/Decimal"
+        grossAmount:
+          $ref: "#/components/schemas/Decimal"
+          description: Total efetivo. Obrigatório se quantity ou unitPrice mudarem.
+        grossAmountOrigin:
+          $ref: "#/components/schemas/GrossAmountOrigin"
+        confirmGrossDivergence:
+          type: boolean
+        tradeDate:
+          type: string
+          format: date
+        custodian:
+          type: string
+          nullable: true
+        fromCustodian:
+          type: string
+          nullable: true
+        toCustodian:
+          type: string
+          nullable: true
+    TransactionMove:
+      type: object
+      required: [toPortfolioId]
+      properties:
+        toPortfolioId:
+          type: string
+          format: uuid
+    Position:
+      type: object
+      required: [ticker, quantity, freeQuantity, costKnown]
+      properties:
+        ticker:
+          type: string
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        avgCost:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Null quando costKnown=false; sentinela persistida 0 não é PM
+        costKnown:
+          type: boolean
+        unknownQuantity:
+          $ref: "#/components/schemas/Decimal"
+        knownQuantity:
+          $ref: "#/components/schemas/Decimal"
+        knownTotalCost:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        freeQuantity:
+          $ref: "#/components/schemas/Decimal"
+        marketPrice:
+          $ref: "#/components/schemas/Decimal"
+        marketPriceProvenance:
+          $ref: "#/components/schemas/Provenance"
+        unrealizedPnl:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Null se costKnown=false; senão (marketPrice − avgCost) × quantity quando há close
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        marketValue:
+          $ref: "#/components/schemas/Decimal"
+        costBasis:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        weightPercent:
+          $ref: "#/components/schemas/Decimal"
+          description: Peso no patrimônio total (RV + Tesouro + carrego RF)
+        weightClassPercent:
+          $ref: "#/components/schemas/Decimal"
+        weightSectorPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        sector:
+          type: string
+          nullable: true
+        dividendYield:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        yocPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        pl:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: P/L múltiplo; omitido se LPA ≤ 0 (BR-039)
+        devaluation:
+          type: boolean
+          description: true se close &lt; PM (BR-305)
+        quantityByCustodian:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustodianQuantity"
+    AssetClass:
+      type: string
+      enum: [EQUITY, FII, FII_AGRO, ETF, BDR, TREASURY, FIXED_INCOME_PRIVATE, DERIVATIVE]
+    CustodianQuantity:
+      type: object
+      required: [custodian, quantity]
+      properties:
+        custodian:
+          type: string
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+    PortfolioWealth:
+      type: object
+      required: [summary, series, allocationByClass]
+      properties:
+        summary:
+          $ref: "#/components/schemas/PortfolioWealthSummary"
+        series:
+          type: array
+          items:
+            $ref: "#/components/schemas/PortfolioWealthPoint"
+        allocationByClass:
+          type: array
+          items:
+            $ref: "#/components/schemas/AllocationByClass"
+        allocationBySector:
+          type: array
+          items:
+            $ref: "#/components/schemas/AllocationBySector"
+        allocationByIndexer:
+          type: array
+          items:
+            $ref: "#/components/schemas/AllocationByIndexer"
+        allocationMeta:
+          $ref: "#/components/schemas/AllocationMeta"
+    PortfolioWealthSummary:
+      type: object
+      required: [marketValue, costBasis, unrealizedPnl, creditedIncome12m]
+      properties:
+        marketValue:
+          $ref: "#/components/schemas/Decimal"
+        costBasis:
+          $ref: "#/components/schemas/Decimal"
+        unrealizedPnl:
+          $ref: "#/components/schemas/Decimal"
+        creditedIncome12m:
+          $ref: "#/components/schemas/Decimal"
+        cashBalance:
+          $ref: "#/components/schemas/Decimal"
+          description: Caixa reconstruído dos fatos (trades, recibos CREDITED, APPLY/resgate/SETTLE RF informados)
+        twrPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        mwrrPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        valuationComposition:
+          $ref: "#/components/schemas/WealthValuationComposition"
+    PortfolioWealthPoint:
+      type: object
+      required: [asOf, marketValue, costBasis]
+      properties:
+        asOf:
+          type: string
+          format: date
+        marketValue:
+          $ref: "#/components/schemas/Decimal"
+        costBasis:
+          $ref: "#/components/schemas/Decimal"
+        creditedIncome:
+          $ref: "#/components/schemas/Decimal"
+    AllocationByClass:
+      type: object
+      required: [assetClass, marketValue, weightPercent]
+      properties:
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        marketValue:
+          $ref: "#/components/schemas/Decimal"
+        weightPercent:
+          $ref: "#/components/schemas/Decimal"
+    AllocationBySector:
+      type: object
+      required: [sector, marketValue, weightPercent]
+      properties:
+        sector:
+          type: string
+          description: Código/rótulo B3 em assets.sector, ou UNCLASSIFIED — nunca inferido do ticker
+        marketValue:
+          $ref: "#/components/schemas/Decimal"
+        weightPercent:
+          $ref: "#/components/schemas/Decimal"
+    AllocationByIndexer:
+      type: object
+      required: [indexer, marketValue, weightPercent]
+      properties:
+        indexer:
+          type: string
+          enum:
+            - PRE
+            - CDI_PERCENT
+            - CDI_SPREAD
+            - IPCA_SPREAD
+            - SELIC_OVER
+            - IPCA_PLUS
+            - UNCLASSIFIED
+            - OUTSIDE_INDEXER_DIM
+          description: >
+            Convenções distintas; NÃO fundir CDI_PERCENT com CDI_SPREAD.
+            Listados (equity/FII/ETF) → OUTSIDE_INDEXER_DIM.
+        label:
+          type: string
+        marketValue:
+          $ref: "#/components/schemas/Decimal"
+        weightPercent:
+          $ref: "#/components/schemas/Decimal"
+    AllocationMeta:
+      type: object
+      required: [classificationAsOf, sectorSource, cashExcludedFromWeights, investedMarketValue]
+      properties:
+        classificationAsOf:
+          type: string
+          format: date
+        sectorSource:
+          type: string
+          enum: [ASSET_SECTOR_FIELD]
+        cashExcludedFromWeights:
+          type: boolean
+        investedMarketValue:
+          $ref: "#/components/schemas/Decimal"
+        cashBalance:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        partialCoverage:
+          type: boolean
+        unclassifiedSectorMarketValue:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        classifiedSectorWeightPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: MV classificado / (classificado+UNCLASSIFIED); tab≠cobertura completa
+        sectorCoverageNote:
+          type: string
+          nullable: true
+        limitations:
+          type: array
+          items:
+            type: string
+    AssetSearchHit:
+      type: object
+      required: [ticker, name, assetClass]
+      properties:
+        ticker:
+          type: string
+        name:
+          type: string
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        sector:
+          type: string
+          nullable: true
+    AssetCompareResponse:
+      type: object
+      required: [assetClass, items]
+      properties:
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssetSheet"
+    TreasuryHistoryResponse:
+      type: object
+      required: [series]
+      properties:
+        series:
+          type: array
+          items:
+            $ref: "#/components/schemas/TreasuryBondHistory"
+    TreasuryBondHistory:
+      type: object
+      required: [bondType, maturity, points]
+      properties:
+        bondType:
+          type: string
+        maturity:
+          type: string
+          format: date
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/TreasuryPuPoint"
+    TreasuryPuPoint:
+      type: object
+      required: [asOf, marketPu, carryPu]
+      properties:
+        asOf:
+          type: string
+          format: date
+        marketPu:
+          $ref: "#/components/schemas/Decimal"
+        carryPu:
+          $ref: "#/components/schemas/Decimal"
+    PortfolioReturns:
+      type: object
+      required: [twrPercent, mwrrPercent, method, coverage]
+      description: >
+        TWR e MWRR sempre segregados (BR-022). `mwrrPercent` espelha `mwrrSimplePercent`
+        (legado); TIR verdadeira em `mwrrIrrPercent` quando convergente.
+      properties:
+        twrPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        mwrrPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Alias legado de mwrrSimplePercent — money-weighted simples; NÃO é TIR
+        mwrrSimplePercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: (V_T − netInvested) / netInvested × 100; não é TIR
+        mwrrIrrPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: TIR (XIRR) do período; null se NO_SOLUTION
+        mwrrIrrStatus:
+          type: string
+          enum: [OK, NO_SOLUTION, NOT_APPLICABLE, UNAVAILABLE]
+          nullable: true
+        method:
+          type: string
+          enum: [TWR_EVENT, TWR_UNAVAILABLE]
+          description: Método TWR aplicado neste recorte
+        coverage:
+          type: object
+          required: [status, bases, limitations]
+          properties:
+            status:
+              type: string
+              enum:
+                - OK
+                - INSUFFICIENT_HISTORY
+                - COST_UNKNOWN
+                - PARTIAL_COVERAGE
+                - UNAVAILABLE
+            bases:
+              type: array
+              items:
+                type: string
+                enum: [EQUITY_CLOSE, FIXED_INCOME_CARRY, TREASURY_PU, CASH]
+              description: Bases de avaliação incluídas no V usado
+            effectiveFrom:
+              type: string
+              format: date
+              nullable: true
+            effectiveTo:
+              type: string
+              format: date
+              nullable: true
+            limitations:
+              type: array
+              items:
+                type: string
+        benchmarks:
+          type: array
+          items:
+            $ref: "#/components/schemas/PortfolioReturnBenchmark"
+          description: Comparáveis no mesmo período efetivo; ausentes se sem fonte
+        asOf:
+          type: string
+          format: date
+        appreciationPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Valorização agregada no período (≠ proventos)
+        incomePercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Proventos creditados vs custo (≠ TWR)
+        realizedPnl:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Soma aproximada de ganhos em SELL
+        monthly:
+          type: array
+          items:
+            $ref: "#/components/schemas/PortfolioReturnMonth"
+    ScopedPortfolioReturns:
+      allOf:
+        - $ref: "#/components/schemas/PortfolioReturns"
+        - type: object
+          required: [portfolioIds]
+          properties:
+            portfolioIds:
+              type: array
+              items:
+                type: string
+                format: uuid
+            scope:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: [single, subset, all]
+                portfolioIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+            portfolio:
+              $ref: "#/components/schemas/PortfolioReturnsLevel"
+              nullable: true
+            byClass:
+              type: array
+              items:
+                $ref: "#/components/schemas/PortfolioReturnsLevel"
+            byAsset:
+              type: array
+              items:
+                $ref: "#/components/schemas/PortfolioReturnsLevel"
+            performanceChart:
+              $ref: "#/components/schemas/PortfolioPerformanceChart"
+            analyticsUnavailableReason:
+              type: string
+              nullable: true
+    PortfolioReturnsLevel:
+      type: object
+      required: [level, key, method, coverage]
+      properties:
+        level:
+          type: string
+          enum: [portfolio, class, asset]
+        key:
+          type: string
+        ticker:
+          type: string
+          description: Presente em level=asset
+        assetId:
+          type: string
+          format: uuid
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        marketValue:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: V do perímetro do ativo na data asOf (posição atual)
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        unrealizedPnl:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Resultado monetário; null se custo desconhecido — não confundir com TWR %
+        twrPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Percentual do período (não anualizado neste corte)
+        mwrrPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Alias legado de mwrrSimplePercent — não é TIR
+        mwrrSimplePercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Money-weighted simples (V−net)/net — não é TIR/MWRR IRR
+        mwrrIrrPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        mwrrIrrStatus:
+          type: string
+          enum: [OK, NO_SOLUTION, NOT_APPLICABLE, UNAVAILABLE]
+          nullable: true
+        method:
+          type: string
+          enum: [TWR_EVENT, TWR_UNAVAILABLE]
+        series:
+          type: array
+          description: >
+            TWR cumulativo event-based do perímetro (não gráfico de preço).
+            Sem interpolação entre datas de fluxo.
+          items:
+            $ref: "#/components/schemas/TwrSeriesPoint"
+        coverage:
+          type: object
+          additionalProperties: true
+    TwrSeriesPoint:
+      type: object
+      required: [asOf, status]
+      properties:
+        asOf:
+          type: string
+          format: date
+        twrPercentCumulative:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        status:
+          type: string
+          enum: [OK, PARTIAL_COVERAGE, UNAVAILABLE, INSUFFICIENT_HISTORY]
+    PortfolioReturnBenchmark:
+      type: object
+      required: [code, nature, source, returnPercent, status]
+      properties:
+        code:
+          type: string
+          enum: [CDI, IPCA, IBOV, IFIX]
+        nature:
+          type: string
+          enum: [TOTAL_RETURN_SYNTH, INFLATION_INDEX, PRICE_INDEX]
+          description: Natureza da série; não misturar sem disclaimer
+        source:
+          type: string
+          description: Ex. BCB_SGS_4389, IBGE_1737, TEST_FIXTURE
+        returnPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        status:
+          type: string
+          enum: [OK, UNAVAILABLE, PARTIAL_COVERAGE]
+        unit:
+          type: string
+          nullable: true
+          description: Ex. percent_period
+        calendar:
+          type: string
+          nullable: true
+          description: Ex. DU_252, CIVIL_MONTH
+    PortfolioReturnMonth:
+      type: object
+      required: [month, twrPercent, mwrrPercent]
+      properties:
+        month:
+          type: string
+          description: YYYY-MM
+        twrPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        mwrrPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        appreciationPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        incomePercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+    ImportJob:
+      type: object
+      required: [id, status, kind]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [SINACOR_PDF, CSV, XLSX]
+        ledgerMode:
+          type: string
+          enum: [historical, initial_position]
+        cutDate:
+          type: string
+          format: date
+          nullable: true
+        status:
+          type: string
+          enum: [pending, parsing, awaiting_mapping, preview, committing, succeeded, failed, cancelled]
+        previewRowCount:
+          type: integer
+        previewRows:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportPreviewRow"
+        rawHeaders:
+          type: array
+          items:
+            type: string
+          description: Cabeçalhos do arquivo quando status awaiting_mapping
+        rawSampleRows:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+          description: Até 20 linhas de amostra (texto bruto)
+        columnMapping:
+          $ref: "#/components/schemas/ImportColumnMapping"
+        errorMessage:
+          type: string
+          nullable: true
+    ImportColumnMapping:
+      type: object
+      required: [ticker, eventType, quantity, unitPrice, tradeDate]
+      properties:
+        ticker:
+          type: integer
+          minimum: 0
+        eventType:
+          type: integer
+          minimum: 0
+        quantity:
+          type: integer
+          minimum: 0
+        unitPrice:
+          type: integer
+          minimum: 0
+        tradeDate:
+          type: integer
+          minimum: 0
+        costs:
+          type: integer
+          minimum: 0
+        custodian:
+          type: integer
+          minimum: 0
+    ImportColumnMappingRequest:
+      type: object
+      required: [columnMapping]
+      properties:
+        columnMapping:
+          $ref: "#/components/schemas/ImportColumnMapping"
+    ImportPreviewRow:
+      type: object
+      required: [line, valid]
+      properties:
+        line:
+          type: integer
+        ticker:
+          type: string
+        eventType:
+          $ref: "#/components/schemas/LedgerEventType"
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        unitPrice:
+          $ref: "#/components/schemas/Decimal"
+        costs:
+          $ref: "#/components/schemas/Decimal"
+        tradeDate:
+          type: string
+          format: date
+        custodian:
+          type: string
+          description: Rótulo de corretora/custódia (Instituição no arquivo PT)
+        valid:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+        costBasisUnknown:
+          type: boolean
+        limitations:
+          type: array
+          items:
+            type: string
+          description: >
+            e4-lots-1: positions é relatório; initial_position = SNAPSHOT
+            sem caixa; historical = factos; snapshot ≠ restauro completo.
+        possibleDuplicate:
+          type: boolean
+          description: >
+            Tupla canónica coincide com lançamento existente mas a origem não é
+            comprovadamente a mesma (raw hash distinto). Exige revisão; não autoriza
+            descarte automático.
+        grossAmount:
+          $ref: "#/components/schemas/Decimal"
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+          description: Inferida no preview; TREASURY quando linha é Tesouro Direto
+        treasuryBondType:
+          type: string
+          description: Rótulo do título (ex. Tesouro Selic) quando assetClass=TREASURY
+        treasuryMaturity:
+          type: string
+          format: date
+          description: Vencimento parseado do ticker quando assetClass=TREASURY
+    AssetSheet:
+      type: object
+      required: [ticker, assetClass, name]
+      properties:
+        ticker:
+          type: string
+        assetClass:
+          type: string
+          enum: [EQUITY, FII, FII_AGRO, ETF, BDR, TREASURY, FIXED_INCOME_PRIVATE, DERIVATIVE]
+        name:
+          type: string
+        metrics:
+          description: Painel tipado por assetClass; campos ausentes = sem insumo (BR-039)
+          oneOf:
+            - $ref: "#/components/schemas/EquityMetrics"
+            - $ref: "#/components/schemas/FiiMetricsPanel"
+            - $ref: "#/components/schemas/EtfMetrics"
+            - type: object
+              additionalProperties: true
+        fiiHealthScore:
+          $ref: "#/components/schemas/FiiHealthScore"
+          nullable: true
+        income:
+          $ref: "#/components/schemas/AssetIncomeMetrics"
+          nullable: true
+        provenance:
+          $ref: "#/components/schemas/Provenance"
+    PriceClose:
+      type: object
+      required: [date, close, provenance]
+      properties:
+        date:
+          type: string
+          format: date
+        close:
+          $ref: "#/components/schemas/Decimal"
+        provenance:
+          $ref: "#/components/schemas/Provenance"
+    DividendReceipt:
+      type: object
+      required: [id, portfolioId, dividendId, status, quantityAtCom, amountGross, amountNet]
+      properties:
+        id:
+          type: string
+          format: uuid
+        portfolioId:
+          type: string
+          format: uuid
+        dividendId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [PROVISIONED, CREDITED]
+        quantityAtCom:
+          $ref: "#/components/schemas/Decimal"
+        amountGross:
+          $ref: "#/components/schemas/Decimal"
+        amountNet:
+          $ref: "#/components/schemas/Decimal"
+        creditedAt:
+          type: string
+          format: date-time
+          nullable: true
+        custodian:
+          type: string
+          description: IF predominante na data-com (BR-048)
+    DividendView:
+      type: object
+      required: [ticker, nature, lifecycleState, amountGross, amountNet]
+      properties:
+        dividendId:
+          type: string
+          format: uuid
+        receiptStatus:
+          type: string
+          enum: [NONE, PROVISIONED, CREDITED]
+        receiptId:
+          type: string
+          format: uuid
+          nullable: true
+        ticker:
+          type: string
+        nature:
+          type: string
+          enum: [DIVIDEND, JCP, FII_INCOME, AMORTIZATION]
+        lifecycleState:
+          type: string
+          enum: [ANNOUNCED, EX_NO_RIGHT, CREDITED]
+        comDate:
+          type: string
+          format: date
+        exDate:
+          type: string
+          format: date
+        payDate:
+          type: string
+          format: date
+        amountGross:
+          $ref: "#/components/schemas/Decimal"
+        amountNet:
+          $ref: "#/components/schemas/Decimal"
+        nonRecurring:
+          type: boolean
+          default: false
+        custodians:
+          type: array
+          description: Rateio por IF na data-com (BR-048)
+          items:
+            $ref: "#/components/schemas/DividendCustodianShare"
+    FinancialInstitution:
+      type: object
+      required: [code, name, active]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        fullName:
+          type: string
+        cnpj:
+          type: string
+        active:
+          type: boolean
+    AssetCustodyBucket:
+      type: object
+      required: [custodian, quantity]
+      properties:
+        custodian:
+          type: string
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+    DividendCustodianShare:
+      type: object
+      required: [custodian, quantity, amountGross, amountNet]
+      properties:
+        custodian:
+          type: string
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        amountGross:
+          $ref: "#/components/schemas/Decimal"
+        amountNet:
+          $ref: "#/components/schemas/Decimal"
+    YieldOnCost:
+      type: object
+      required: [ticker, yocPercent, provenance]
+      properties:
+        ticker:
+          type: string
+        yocPercent:
+          $ref: "#/components/schemas/Decimal"
+        provenance:
+          $ref: "#/components/schemas/Provenance"
+    DividendSeasonality:
+      type: object
+      required: [year, cells]
+      properties:
+        year:
+          type: integer
+        cells:
+          type: array
+          items:
+            type: object
+            required: [ticker, month, amountNet]
+            properties:
+              ticker:
+                type: string
+              month:
+                type: integer
+                minimum: 1
+                maximum: 12
+              amountNet:
+                $ref: "#/components/schemas/Decimal"
+    DividendProjection:
+      type: object
+      required: [items, disclaimer]
+      properties:
+        disclaimer:
+          type: string
+          description: Expectativa anunciada — não retorno garantido (BR-103)
+        items:
+          type: array
+          items:
+            type: object
+            required: [ticker, nature, amountNet, lifecycleState]
+            properties:
+              ticker:
+                type: string
+              nature:
+                type: string
+                enum: [DIVIDEND, JCP, FII_INCOME, AMORTIZATION]
+              amountNet:
+                $ref: "#/components/schemas/Decimal"
+              payDate:
+                type: string
+                format: date
+              lifecycleState:
+                type: string
+                enum: [ANNOUNCED, EX_NO_RIGHT, CREDITED]
+    EttjCurveKind:
+      type: string
+      enum: [PREFIXED, REAL]
+    EttjNssView:
+      type: object
+      required: [curveDate, curveKind, beta0, beta1, beta2, beta3, tau1, tau2]
+      properties:
+        curveDate:
+          type: string
+          format: date
+        curveKind:
+          $ref: "#/components/schemas/EttjCurveKind"
+        beta0:
+          $ref: "#/components/schemas/Decimal"
+        beta1:
+          $ref: "#/components/schemas/Decimal"
+        beta2:
+          $ref: "#/components/schemas/Decimal"
+        beta3:
+          $ref: "#/components/schemas/Decimal"
+        tau1:
+          $ref: "#/components/schemas/Decimal"
+        tau2:
+          $ref: "#/components/schemas/Decimal"
+        provenance:
+          $ref: "#/components/schemas/Provenance"
+          nullable: true
+    TreasuryView:
+      type: object
+      required: [id, bondType, maturity, quantity, contractedRate]
+      properties:
+        id:
+          type: string
+          format: uuid
+        bondType:
+          type: string
+        maturity:
+          type: string
+          format: date
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        contractedRate:
+          $ref: "#/components/schemas/Decimal"
+          description: Taxa contratada (visão carrego)
+        marketPu:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: PU oficial Tesouro Transparente; null se ausente (BR-023)
+        marketValue:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: marketPu × quantity; null se PU ausente
+        marketPuProvenance:
+          $ref: "#/components/schemas/Provenance"
+          nullable: true
+        curvePu:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: PU de carrego (desconto face pela taxa contratada, base 252)
+        ettjPu:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: PU teórico ETTJ (NSS); estimativa — não é PU oficial
+        exitSpread:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: PU MtM - PU carrego
+        ettjSpread:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: PU MtM - PU ETTJ
+        vna:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        shocks:
+          type: array
+          items:
+            $ref: "#/components/schemas/TreasuryShock"
+          nullable: true
+    TreasurySpecies:
+      type: string
+      enum: [PREFIXADO_ZERO, SELIC, IPCA_PLUS, PREFIXADO_COUPON, IPCA_PLUS_COUPON, RENDA_MAIS, EDUCA_MAIS]
+      description: >
+        PREFIXADO_ZERO (§6a), SELIC/LFT (§6b), IPCA_PLUS NTN-B Principal (§6c),
+        PREFIXADO_COUPON NTN-F (§6d.1), IPCA_PLUS_COUPON NTN-B cupom (§6d.2),
+        RENDA_MAIS NTN-B1 RendA+ (§6e.1, n=240), EDUCA_MAIS NTN-B1 Educa+ (§6e.2, n=60).
+    TreasuryLotStatus:
+      type: string
+      enum: [OPEN, CLOSED, SETTLED]
+    TreasuryEvaluationQuality:
+      type: string
+      enum:
+        [
+          COST,
+          CARRY_CONTRACTED,
+          CARRY_AT_FACE,
+          CARRY_AT_VNA,
+          OFFICIAL_REDEEM_PU,
+          ETTJ_ESTIMATE,
+          MISSING,
+          GAP,
+          STALE,
+          UNSUPPORTED_PROJECTION,
+        ]
+    TreasuryEvaluationMeta:
+      type: object
+      required: [basis, quality, asOf]
+      properties:
+        basis:
+          type: string
+          enum: [COST, CARRY, MARKET, ETTJ]
+        quality:
+          $ref: "#/components/schemas/TreasuryEvaluationQuality"
+        asOf:
+          type: string
+          format: date
+        source:
+          type: string
+          nullable: true
+        observedAt:
+          type: string
+          format: date
+          nullable: true
+        curveDate:
+          type: string
+          format: date
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+          description: Motivo de incompletude daquela base (independente das outras)
+    TreasuryLotCreate:
+      type: object
+      required:
+        - species
+        - bondLabel
+        - maturityDate
+        - tradeDate
+        - quantity
+        - acquisitionPu
+        - contractedRatePercentAa
+        - custodian
+      properties:
+        species:
+          $ref: "#/components/schemas/TreasurySpecies"
+        bondLabel:
+          type: string
+          example: Tesouro Prefixado 2031
+        maturityDate:
+          type: string
+          format: date
+        lotCode:
+          type: string
+          nullable: true
+        tradeDate:
+          type: string
+          format: date
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        acquisitionPu:
+          $ref: "#/components/schemas/Decimal"
+        contractedRatePercentAa:
+          $ref: "#/components/schemas/Decimal"
+          description: >
+            Prefixado: taxa contratada % a.a. 252 (>0).
+            Selic: taxa de ágio/deságio % a.a. 252 (0=par; >0 deságio; <0 ágio).
+            IPCA_PLUS: taxa real contratada % a.a. 252.
+            PREFIXADO_COUPON: TIR de aquisição % a.a. 252 (≠ taxa do cupom 10%).
+            IPCA_PLUS_COUPON: TIR real de aquisição % a.a. 252 (≠ cupom 6%).
+            RENDA_MAIS / EDUCA_MAIS: TIR real de aquisição % a.a. 252 (≠ Ta/Taf).
+            MUST NOT ipcaLagMonths / emissão casada CDB — se presentes no body:
+            422 UNSUPPORTED_CDB_CONVENTION.
+        conversionDate:
+          type: string
+          format: date
+          description: >
+            RENDA_MAIS / EDUCA_MAIS obrigatório; dia civil 15.
+            RendA+: 240 parcelas, span 239 meses. Educa+: 60 parcelas, span 59 meses.
+            Distinto de maturityDate (último pagamento). Span errado →
+            422 UNSUPPORTED_TREASURY_AMORT_CALENDAR. Null nas outras espécies.
+        couponRatePercentAa:
+          $ref: "#/components/schemas/Decimal"
+          description: >
+            NTN-F: omitir ou 10. NTN-B cupom: omitir ou 6.
+            Outro valor → 422 UNSUPPORTED_TREASURY_COUPON_RATE.
+            MUST NOT derivar da taxa de aquisição.
+        vnaBaseDate:
+          type: string
+          format: date
+          description: >
+            SELIC default 2000-07-01; IPCA_PLUS default 2000-07-15; omitir em PREFIXADO_ZERO
+        costs:
+          $ref: "#/components/schemas/Decimal"
+        grossAmount:
+          $ref: "#/components/schemas/Decimal"
+        grossAmountOrigin:
+          type: string
+          enum: [INFORMED, DERIVED]
+        custodian:
+          type: string
+          description: Código B3 da IF
+    TreasuryLotRedeem:
+      type: object
+      required: [tradeDate, quantity, grossReceived]
+      properties:
+        tradeDate:
+          type: string
+          format: date
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        grossReceived:
+          $ref: "#/components/schemas/Decimal"
+        netReceived:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+    TreasuryLotSettle:
+      type: object
+      required: [tradeDate, grossReceived]
+      properties:
+        tradeDate:
+          type: string
+          format: date
+        grossReceived:
+          $ref: "#/components/schemas/Decimal"
+          description: >
+            Principal informado. NTN-F/NTN-B com cupom: não inclui o cupom de
+            vencimento (recibo próprio). MUST NOT inferir split de um total misto.
+        netReceived:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+    TreasuryCouponReceiptCreate:
+      type: object
+      required: [grossReceived]
+      properties:
+        receivedDate:
+          type: string
+          format: date
+          description: Data de crédito informada; default = pagamento ajustado
+        grossReceived:
+          $ref: "#/components/schemas/Decimal"
+        netReceived:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+    TreasuryCouponReceipt:
+      type: object
+      required:
+        - id
+        - portfolioId
+        - lotId
+        - nominalDate
+        - adjustedPaymentDate
+        - predictedGross
+        - grossReceived
+        - variance
+        - status
+        - creditedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        portfolioId:
+          type: string
+          format: uuid
+        lotId:
+          type: string
+          format: uuid
+        nominalDate:
+          type: string
+          format: date
+        adjustedPaymentDate:
+          type: string
+          format: date
+        predictedGross:
+          $ref: "#/components/schemas/Decimal"
+        grossReceived:
+          $ref: "#/components/schemas/Decimal"
+        netReceived:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        variance:
+          $ref: "#/components/schemas/Decimal"
+        status:
+          type: string
+          enum: [CREDITED]
+        creditedAt:
+          type: string
+          format: date-time
+    TreasuryCouponAgendaItem:
+      type: object
+      required:
+        - nominalDate
+        - adjustedPaymentDate
+        - contractual
+        - eligible
+        - predictedGross
+        - state
+      properties:
+        nominalDate:
+          type: string
+          format: date
+        adjustedPaymentDate:
+          type: string
+          format: date
+        contractual:
+          type: boolean
+        eligible:
+          type: boolean
+        predictedGross:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        remainingInCarry:
+          type: boolean
+          description: true se o fluxo ainda integra o PU teórico (adjusted > asOf)
+        state:
+          type: string
+          enum: [SCHEDULED, RIGHT, CREDITED, NOT_ELIGIBLE]
+        receipt:
+          $ref: "#/components/schemas/TreasuryCouponReceipt"
+          nullable: true
+    TreasuryCouponAgenda:
+      type: object
+      required: [lotId, couponRatePercentAa, items]
+      properties:
+        lotId:
+          type: string
+          format: uuid
+        couponRatePercentAa:
+          $ref: "#/components/schemas/Decimal"
+        couponSemestralPercent:
+          $ref: "#/components/schemas/Decimal"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TreasuryCouponAgendaItem"
+    TreasuryAmortizationReceiptCreate:
+      type: object
+      required: [grossReceived]
+      properties:
+        receivedDate:
+          type: string
+          format: date
+        grossReceived:
+          $ref: "#/components/schemas/Decimal"
+        netReceived:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+    TreasuryAmortizationReceipt:
+      type: object
+      required:
+        - id
+        - portfolioId
+        - lotId
+        - installmentIndex
+        - nominalDate
+        - adjustedPaymentDate
+        - taRate
+        - predictedGross
+        - grossReceived
+        - variance
+        - status
+        - creditedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        portfolioId:
+          type: string
+          format: uuid
+        lotId:
+          type: string
+          format: uuid
+        installmentIndex:
+          type: integer
+        nominalDate:
+          type: string
+          format: date
+        adjustedPaymentDate:
+          type: string
+          format: date
+        taRate:
+          $ref: "#/components/schemas/Decimal"
+        predictedGross:
+          $ref: "#/components/schemas/Decimal"
+        grossReceived:
+          $ref: "#/components/schemas/Decimal"
+        netReceived:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        variance:
+          $ref: "#/components/schemas/Decimal"
+        status:
+          type: string
+          enum: [CREDITED]
+        creditedAt:
+          type: string
+          format: date-time
+    TreasuryAmortizationAgendaItem:
+      type: object
+      required:
+        - installmentIndex
+        - nominalDate
+        - adjustedPaymentDate
+        - taRate
+        - contractual
+        - eligible
+        - predictedGross
+        - remainingInCarry
+        - state
+      properties:
+        installmentIndex:
+          type: integer
+        nominalDate:
+          type: string
+          format: date
+        adjustedPaymentDate:
+          type: string
+          format: date
+        taRate:
+          $ref: "#/components/schemas/Decimal"
+        contractual:
+          type: boolean
+        eligible:
+          type: boolean
+        predictedGross:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        remainingInCarry:
+          type: boolean
+        state:
+          type: string
+          enum: [SCHEDULED, RIGHT, CREDITED, NOT_ELIGIBLE, OUTSIDE_SNAPSHOT]
+        receipt:
+          $ref: "#/components/schemas/TreasuryAmortizationReceipt"
+          nullable: true
+    TreasuryAmortizationAgenda:
+      type: object
+      required: [lotId, installmentCount, taRate, tafRate, conversionDate, maturityDate, phase, remainingAmortPercent, items]
+      properties:
+        lotId:
+          type: string
+          format: uuid
+        installmentCount:
+          type: integer
+          enum: [240, 60]
+        taRate:
+          $ref: "#/components/schemas/Decimal"
+        tafRate:
+          $ref: "#/components/schemas/Decimal"
+        conversionDate:
+          type: string
+          format: date
+        maturityDate:
+          type: string
+          format: date
+        phase:
+          type: string
+          enum: [ACCUMULATION, RECEIPT, ENDED_SCHEDULE]
+        remainingAmortPercent:
+          $ref: "#/components/schemas/Decimal"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TreasuryAmortizationAgendaItem"
+    TreasuryLotEvent:
+      type: object
+      required: [id, eventType, tradeDate, quantity, estimatedCarry, grossReceived]
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          enum: [BUY, PARTIAL_REDEEM, FULL_REDEEM, SETTLE, SNAPSHOT]
+        tradeDate:
+          type: string
+          format: date
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        estimatedCarry:
+          $ref: "#/components/schemas/Decimal"
+        grossReceived:
+          $ref: "#/components/schemas/Decimal"
+        netReceived:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        carryVariance:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+    TreasuryLot:
+      type: object
+      required:
+        - id
+        - portfolioId
+        - species
+        - bondLabel
+        - maturityDate
+        - tradeDate
+        - quantityAcquired
+        - remainingQuantity
+        - acquisitionPu
+        - contractedRatePercentAa
+        - costs
+        - grossAmount
+        - custodian
+        - status
+        - costBasis
+        - carryPu
+        - carryValue
+        - marketPu
+        - marketValue
+        - ettjPu
+        - ettjValue
+        - evaluations
+        - events
+        - limitations
+      properties:
+        id:
+          type: string
+          format: uuid
+        portfolioId:
+          type: string
+          format: uuid
+        species:
+          $ref: "#/components/schemas/TreasurySpecies"
+        bondLabel:
+          type: string
+        maturityDate:
+          type: string
+          format: date
+        lotCode:
+          type: string
+          nullable: true
+        tradeDate:
+          type: string
+          format: date
+        quantityAcquired:
+          $ref: "#/components/schemas/Decimal"
+        remainingQuantity:
+          $ref: "#/components/schemas/Decimal"
+        acquisitionPu:
+          $ref: "#/components/schemas/Decimal"
+        contractedRatePercentAa:
+          $ref: "#/components/schemas/Decimal"
+        vnaBaseDate:
+          type: string
+          format: date
+          nullable: true
+          description: SELIC default 2000-07-01; IPCA_PLUS default 2000-07-15; null em PREFIXADO_ZERO
+        costs:
+          $ref: "#/components/schemas/Decimal"
+        grossAmount:
+          $ref: "#/components/schemas/Decimal"
+        grossAmountOrigin:
+          type: string
+          enum: [INFORMED, DERIVED]
+        custodian:
+          type: string
+        status:
+          $ref: "#/components/schemas/TreasuryLotStatus"
+        settledAt:
+          type: string
+          format: date-time
+          nullable: true
+        costBasis:
+          $ref: "#/components/schemas/Decimal"
+        carryPu:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Null quando carrego GAP/STALE/UNSUPPORTED_PROJECTION (Selic ou IPCA+)
+        carryValue:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        vna:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: VNA Selic/IPCA+ na asOf; null se GAP/UNSUPPORTED ou espécie sem VNA
+        quotation:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Cotação % do VNA (Selic/IPCA+); null se GAP/UNSUPPORTED
+        incompletenessReasons:
+          type: array
+          items:
+            type: string
+          description: >
+            Motivos por lote. treasuryIncompleteCount usa só ausência de PU oficial
+            em OPEN (MARKET_PU_MISSING), não carrego GAP.
+        seriesThrough:
+          type: string
+          format: date
+          nullable: true
+          description: >
+            SELIC: último DU com SELIC_OVER_AA_252 ≤ asOf.
+            IPCA_PLUS: último mês de referência IPCA_NI oficial utilizável ≤ asOf
+            (YYYY-MM-01). Null se nenhum oficial.
+        marketPu:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: PU oficial de resgate/venda (Tesouro Transparente PU Venda Manhã); null se ausente
+        marketValue:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        marketPuProvenance:
+          $ref: "#/components/schemas/Provenance"
+          nullable: true
+        marketPuDate:
+          type: string
+          format: date
+          nullable: true
+          description: Data Base efectiva do PU usado (≤ asOf); null se MISSING. Não inventar como preço do dia asOf se STALE.
+        ettjPu:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Estimativa NSS — não é PU oficial de resgate
+        ettjValue:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        evaluations:
+          type: object
+          required: [cost, carry, market, ettj]
+          properties:
+            cost:
+              $ref: "#/components/schemas/TreasuryEvaluationMeta"
+            carry:
+              $ref: "#/components/schemas/TreasuryEvaluationMeta"
+            market:
+              $ref: "#/components/schemas/TreasuryEvaluationMeta"
+            ettj:
+              $ref: "#/components/schemas/TreasuryEvaluationMeta"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/TreasuryLotEvent"
+        conversionDate:
+          type: string
+          format: date
+          nullable: true
+        phase:
+          type: string
+          enum: [ACCUMULATION, RECEIPT, ENDED_SCHEDULE]
+          nullable: true
+          description: RENDA_MAIS / EDUCA_MAIS; null nas restantes
+        remainingAmortPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Soma Ta/Taf com adjusted > asOf (sobre 100 original)
+        couponAgenda:
+          $ref: "#/components/schemas/TreasuryCouponAgenda"
+          nullable: true
+          description: Presente em PREFIXADO_COUPON / IPCA_PLUS_COUPON; null nas restantes
+        amortAgenda:
+          $ref: "#/components/schemas/TreasuryAmortizationAgenda"
+          nullable: true
+          description: Presente em RENDA_MAIS / EDUCA_MAIS; null nas restantes
+        couponRatePercentAa:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: 10 em NTN-F; null nas espécies sem cupom
+        limitations:
+          type: array
+          items:
+            type: string
+          description: Espécies fora do corte e avisos (fixture vs produção)
+        calendarReview:
+          type: object
+          description: >
+            Calendário DU do carrego TPF (`ANBIMA_NATIONAL`): feriados nacionais ANBIMA
+            (sem 25-Jan SP/B3); asOf/liquidação inclusive, maturity exclusive (Metodologia LTN).
+            `maturityDate` = vencimento nominal (≠ data ajustada de pagamento).
+          properties:
+            calendar:
+              type: string
+              enum: [ANBIMA_NATIONAL]
+            source:
+              type: string
+            inclusiveAsOf:
+              type: boolean
+            exclusiveMaturity:
+              type: boolean
+            coverageNote:
+              type: string
+            asOf:
+              type: string
+              format: date
+            maturityDate:
+              type: string
+              format: date
+            du:
+              type: integer
+            postMaturity:
+              type: boolean
+        acquisitionReview:
+          type: object
+          description: PU aquisição vs carrego teórico na tradeDate (diferença registrada; não força igualdade)
+          properties:
+            calendar:
+              type: string
+              enum: [ANBIMA_NATIONAL]
+            duAtTrade:
+              type: integer
+            theoreticalCarryPu:
+              $ref: "#/components/schemas/Decimal"
+            acquisitionPu:
+              $ref: "#/components/schemas/Decimal"
+            acquisitionCarryDifference:
+              $ref: "#/components/schemas/Decimal"
+    FixedIncomeInstrumentType:
+      type: string
+      enum: [CDB, LCI, LCA]
+    FixedIncomeIndexType:
+      type: string
+      enum: [PRE, CDI_PERCENT, CDI_SPREAD, IPCA_SPREAD]
+    FixedIncomeDayCount:
+      type: string
+      enum: [BUSINESS_252, CALENDAR_360]
+    FixedIncomeLiquidityType:
+      type: string
+      enum: [DAILY, AT_MATURITY]
+    WealthValuationComposition:
+      type: object
+      required: [listedEquityMarket, treasuryMarket, fixedIncomeCarry, mixNote]
+      properties:
+        listedEquityMarket:
+          $ref: "#/components/schemas/Decimal"
+        treasuryMarket:
+          $ref: "#/components/schemas/Decimal"
+        fixedIncomeCarry:
+          $ref: "#/components/schemas/Decimal"
+        mixNote:
+          type: string
+          enum: [COMBINED_MARKET_AND_CARRY]
+          description: Total mistura MaM de listados/Tesouro com carrego RF; não rotular tudo como mercado
+        fixedIncomeIncompleteCount:
+          type: integer
+          description: Contratos RF com série GAP/STALE excluídos de fixedIncomeCarry (não entram como zero)
+        treasuryIncompleteCount:
+          type: integer
+          description: Lotes Tesouro OPEN sem PU oficial (BR-023); não entram em treasuryMarket como zero
+    FixedIncomeContractStatus:
+      type: string
+      enum: [OPEN, CLOSED, SETTLED]
+    FixedIncomeEventType:
+      type: string
+      enum: [APPLY, PARTIAL_REDEEM, FULL_REDEEM, SETTLE, SNAPSHOT]
+    FixedIncomeConditionsReview:
+      type: object
+      required:
+        [
+          indexType,
+          dayCount,
+          calendar,
+          inclusiveStart,
+          exclusiveAsOf,
+          startDate,
+          maturityDate,
+          liquidityType,
+        ]
+      properties:
+        indexType:
+          $ref: "#/components/schemas/FixedIncomeIndexType"
+        dayCount:
+          $ref: "#/components/schemas/FixedIncomeDayCount"
+        calendar:
+          type: string
+          enum: [BR_B3_NATIONAL]
+        inclusiveStart:
+          type: boolean
+        exclusiveAsOf:
+          type: boolean
+        preRatePercentAa:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        cdiPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        cdiSpreadPercentAa:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Spread % a.a. 252 se CDI_SPREAD
+        ipcaSpreadPercentAa:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Taxa fixa % a.a. 252 sobre VNa(IPCA) se IPCA_SPREAD
+        startDate:
+          type: string
+          format: date
+        maturityDate:
+          type: string
+          format: date
+        liquidityType:
+          $ref: "#/components/schemas/FixedIncomeLiquidityType"
+        gracePeriodDate:
+          type: string
+          format: date
+          nullable: true
+        seriesKey:
+          type: string
+          enum: [CDI_OVER_AA_252, IPCA_NI]
+          nullable: true
+        seriesUnit:
+          type: string
+          enum: [OVER_PERCENT_AA_252, NUMBER_INDEX]
+          nullable: true
+        anniversaryDay:
+          type: integer
+          minimum: 1
+          maximum: 31
+          nullable: true
+          description: Dia do aniversário mensal (maturityDate.day); IPCA
+        ipcaLagMonths:
+          type: integer
+          enum: [1, 2]
+          nullable: true
+          description: Defasagem contratual Correção Defasada (1 ou 2); não derivada do aniversário
+        correctionPeriodicity:
+          type: string
+          enum: [MONTHLY]
+          nullable: true
+          description: Periodicidade da correção pelo índice (B3 §2.2)
+        correctionType:
+          type: string
+          enum: [DELAYED_PRICE_INDEX]
+          nullable: true
+          description: Correção Defasada (B3 §2.6) — não confundir com aniversário sozinho
+        ni0ReferenceMonth:
+          type: string
+          format: date
+          nullable: true
+          description: Mês de referência do NI0 (YYYY-MM-01); estável após resgate
+        ninReferenceMonth:
+          type: string
+          format: date
+          nullable: true
+          description: Mês de referência do NIn usado no asOf
+        conventionLimitations:
+          type: string
+          nullable: true
+          description: Texto das limitações do corte (UI deve exibir antes de confirmar)
+    FixedIncomeSeriesCoverage:
+      type: object
+      required: [status, asOfRequested]
+      properties:
+        status:
+          type: string
+          enum: [COMPLETE, GAP, STALE, NA, UNSUPPORTED]
+        asOfRequested:
+          type: string
+          format: date
+        seriesThrough:
+          type: string
+          format: date
+          nullable: true
+        code:
+          type: string
+          nullable: true
+          description: CDI_SERIES_GAP | IPCA_SERIES_GAP | IPCA_SERIES_STALE | IPCA_KIND_NOT_OFFICIAL | UNSUPPORTED_CONVENTION
+    FixedIncomeContractCreate:
+      type: object
+      required:
+        [
+          instrumentType,
+          issuerName,
+          custodian,
+          principal,
+          issueDate,
+          startDate,
+          maturityDate,
+          liquidityType,
+        ]
+      properties:
+        instrumentType:
+          $ref: "#/components/schemas/FixedIncomeInstrumentType"
+        issuerName:
+          type: string
+        issuerCnpj:
+          type: string
+          nullable: true
+        custodian:
+          type: string
+          description: Código IF B3 (AD-025); resolvido para UUID interno
+        principal:
+          $ref: "#/components/schemas/Decimal"
+        preRatePercentAa:
+          $ref: "#/components/schemas/Decimal"
+          description: Obrigatório se PRE
+        cdiPercent:
+          $ref: "#/components/schemas/Decimal"
+          description: Obrigatório se CDI_PERCENT (% do CDI, ex. 100)
+        cdiSpreadPercentAa:
+          $ref: "#/components/schemas/Decimal"
+          description: Obrigatório se CDI_SPREAD (spread % a.a. 252, >=0); distinto de cdiPercent
+        ipcaSpreadPercentAa:
+          $ref: "#/components/schemas/Decimal"
+          description: >
+            Obrigatório se IPCA_SPREAD (taxa fixa % a.a. 252 sobre VNa, >=0).
+            Convenção: B3 Caderno 26/05/2025 §2+§5.4.1; emissão casada; aniversário 1–27; só IPCA.
+            Fora do corte → 422 UNSUPPORTED_CONVENTION (sem avaliação fictícia).
+        ipcaLagMonths:
+          type: integer
+          enum: [1, 2]
+          description: >
+            Obrigatório se IPCA_SPREAD. Defasagem em meses da Correção Defasada (B3 §2.6),
+            condição contratual explícita. MUST NOT ser inferido do dia do aniversário.
+            Ausente/inválido → 422 UNSUPPORTED_CONVENTION.
+        indexType:
+          $ref: "#/components/schemas/FixedIncomeIndexType"
+          description: PRE | CDI_PERCENT | CDI_SPREAD | IPCA_SPREAD (este com convenção restrita)
+        dayCount:
+          $ref: "#/components/schemas/FixedIncomeDayCount"
+          description: Padrão BUSINESS_252; outros 422 UNSUPPORTED_DAY_COUNT
+        issueDate:
+          type: string
+          format: date
+        startDate:
+          type: string
+          format: date
+        maturityDate:
+          type: string
+          format: date
+        gracePeriodDate:
+          type: string
+          format: date
+          nullable: true
+        liquidityType:
+          $ref: "#/components/schemas/FixedIncomeLiquidityType"
+    FixedIncomeRedemptionCreate:
+      type: object
+      required: [principalAmount, grossReceived, tradeDate]
+      properties:
+        principalAmount:
+          $ref: "#/components/schemas/Decimal"
+          description: Principal baixado (não o valor recebido)
+        grossReceived:
+          $ref: "#/components/schemas/Decimal"
+          description: Valor bruto informado creditado em caixa
+        netReceived:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Valor líquido informado; distinto do bruto e do principal
+        tradeDate:
+          type: string
+          format: date
+    FixedIncomeSettlementCreate:
+      type: object
+      required: [grossReceived, tradeDate]
+      properties:
+        grossReceived:
+          $ref: "#/components/schemas/Decimal"
+        netReceived:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        tradeDate:
+          type: string
+          format: date
+    FixedIncomeEvent:
+      type: object
+      required:
+        [
+          id,
+          contractId,
+          eventType,
+          tradeDate,
+          principalAmount,
+          estimatedCarry,
+          grossReceived,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        contractId:
+          type: string
+          format: uuid
+        eventType:
+          $ref: "#/components/schemas/FixedIncomeEventType"
+        tradeDate:
+          type: string
+          format: date
+        principalAmount:
+          $ref: "#/components/schemas/Decimal"
+        estimatedCarry:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Carrego interno 8 casas; null se série CDI GAP
+        grossReceived:
+          $ref: "#/components/schemas/Decimal"
+        netReceived:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        carryVariance:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: grossReceived − estimatedCarry
+    FixedIncomeContract:
+      type: object
+      required:
+        [
+          id,
+          portfolioId,
+          instrumentType,
+          issuerId,
+          issuerName,
+          custodianInstitutionId,
+          custodian,
+          principal,
+          remainingPrincipal,
+          indexType,
+          dayCount,
+          issueDate,
+          startDate,
+          maturityDate,
+          liquidityType,
+          status,
+          internalCarry,
+          displayedEvaluation,
+          evaluationBasis,
+          conditionsReview,
+          maturityDateReached,
+          projectionStatus,
+          seriesCoverage,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        portfolioId:
+          type: string
+          format: uuid
+        instrumentType:
+          $ref: "#/components/schemas/FixedIncomeInstrumentType"
+        issuerId:
+          type: string
+          format: uuid
+        issuerName:
+          type: string
+        issuerCnpj:
+          type: string
+          nullable: true
+        custodianInstitutionId:
+          type: string
+          format: uuid
+        custodian:
+          type: string
+        principal:
+          $ref: "#/components/schemas/Decimal"
+        remainingPrincipal:
+          $ref: "#/components/schemas/Decimal"
+        preRatePercentAa:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        cdiPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        cdiSpreadPercentAa:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        ipcaSpreadPercentAa:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        ipcaLagMonths:
+          type: integer
+          enum: [1, 2]
+          nullable: true
+          description: Defasagem contratual Correção Defasada; null se não IPCA_SPREAD
+        indexType:
+          $ref: "#/components/schemas/FixedIncomeIndexType"
+        dayCount:
+          $ref: "#/components/schemas/FixedIncomeDayCount"
+        issueDate:
+          type: string
+          format: date
+        startDate:
+          type: string
+          format: date
+        maturityDate:
+          type: string
+          format: date
+        gracePeriodDate:
+          type: string
+          format: date
+          nullable: true
+        liquidityType:
+          $ref: "#/components/schemas/FixedIncomeLiquidityType"
+        status:
+          $ref: "#/components/schemas/FixedIncomeContractStatus"
+        settledAt:
+          type: string
+          format: date-time
+          nullable: true
+        internalCarry:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Observado 8 casas; null se GAP/UNSUPPORTED; não é líquido de resgate
+        displayedEvaluation:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: ROUND_HALF_UP 2 do observado completo
+        observedCarry:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        carriedAmount:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+          description: Alias de observedCarry; não é preço de venda nem líquido
+        projectionStatus:
+          type: string
+          enum: [NONE]
+        seriesCoverage:
+          $ref: "#/components/schemas/FixedIncomeSeriesCoverage"
+        evaluationBasis:
+          type: string
+          enum: [CARRY]
+        maturityDateReached:
+          type: boolean
+        conditionsReview:
+          $ref: "#/components/schemas/FixedIncomeConditionsReview"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/FixedIncomeEvent"
+    ValuationMethod:
+      type: string
+      enum: [BAZIN, GRAHAM_CLASSIC, GRAHAM_ETTJ, GORDON, SECTOR_MULTIPLES, EARNINGS_YIELD]
+    CeilingPriceRequest:
+      type: object
+      required: [ticker, methods, safetyMargin]
+      properties:
+        ticker:
+          type: string
+        methods:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValuationMethod"
+        safetyMargin:
+          $ref: "#/components/schemas/Decimal"
+          description: Fração 0-1 (padrão 0.20)
+    CeilingPriceResponse:
+      type: object
+      required: [ticker, results, opportunity]
+      properties:
+        ticker:
+          type: string
+        results:
+          type: array
+          items:
+            type: object
+            required: [method, status]
+            properties:
+              method:
+                $ref: "#/components/schemas/ValuationMethod"
+              status:
+                type: string
+                enum: [OK, INAPPLICABLE]
+              ceiling:
+                $ref: "#/components/schemas/Decimal"
+              provenance:
+                $ref: "#/components/schemas/Provenance"
+        opportunity:
+          type: boolean
+          description: BR-021
+        safetyMarginApplied:
+          $ref: "#/components/schemas/Decimal"
+        observedMargins:
+          type: array
+          items:
+            type: object
+            required: [method, status]
+            properties:
+              method:
+                $ref: "#/components/schemas/ValuationMethod"
+              status:
+                type: string
+                enum: [OK, INAPPLICABLE]
+              margin:
+                $ref: "#/components/schemas/Decimal"
+                description: 1 - cotacao/teto (antes da margem calibrada)
+              quote:
+                $ref: "#/components/schemas/Decimal"
+                nullable: true
+    AlertTaxonomy:
+      type: string
+      enum: [DETERIORATION, DEVALUATION, STRUCTURAL_TREND, ENTRY_OPPORTUNITY]
+    Alert:
+      type: object
+      required: [id, taxonomy, fact, rationale, guidance, emittedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        ticker:
+          type: string
+        taxonomy:
+          $ref: "#/components/schemas/AlertTaxonomy"
+        fact:
+          type: string
+        rationale:
+          type: string
+        guidance:
+          type: string
+        emittedAt:
+          type: string
+          format: date-time
+    SuitabilityProfile:
+      type: object
+      required: [riskProfile, philosophy, horizon, goalType]
+      properties:
+        riskProfile:
+          type: string
+          enum: [CONSERVATIVE, MODERATE, BOLD, AGGRESSIVE]
+        philosophy:
+          type: string
+          enum: [BESST, VALUE, DIVIDEND_GROWTH, DEEP_VALUE, PASSIVE_INDEX]
+        horizon:
+          type: string
+          enum: [SHORT, MEDIUM, LONG]
+        goalType:
+          type: string
+          enum: [WEALTH_ACCUMULATION, PASSIVE_INCOME]
+    FeatureGate:
+      type: object
+      required: [feature, enabled]
+      properties:
+        feature:
+          type: string
+        enabled:
+          type: boolean
+        plan:
+          type: string
+          enum: [CORE, EXPERT]
+    ExportJob:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed]
+        format:
+          type: string
+          enum: [CSV, XLSX, PDF]
+        portfolioIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        downloadUrl:
+          type: string
+          format: uri
+          nullable: true
+    DiagnoseRequest:
+      type: object
+      required: [portfolioId]
+      properties:
+        portfolioId:
+          type: string
+          format: uuid
+        alertId:
+          type: string
+          format: uuid
+          nullable: true
+        question:
+          type: string
+          description: Pergunta do usuário (sem PII desnecessária)
+    DiagnosisOutput:
+      type: object
+      required: [fact, rationale, guidance, disclaimers, forbiddenTermsHit, citations]
+      properties:
+        fact:
+          type: string
+        rationale:
+          type: string
+        guidance:
+          type: string
+        disclaimers:
+          type: array
+          items:
+            type: string
+        forbiddenTermsHit:
+          type: boolean
+        citations:
+          type: array
+          items:
+            type: object
+            required: [path]
+            properties:
+              path:
+                type: string
+                description: JSON path no grounding
+              label:
+                type: string
+    DividendInconsistency:
+      type: object
+      required: [ticker, code, message, severity]
+      properties:
+        ticker:
+          type: string
+        code:
+          type: string
+          enum: [MISSING_PAY_DATE, NEGATIVE_NET, PHASE_ORDER, DUPLICATE_EX]
+        message:
+          type: string
+        severity:
+          type: string
+          enum: [INFO, WARN, ERROR]
+        dividendId:
+          type: string
+          format: uuid
+          nullable: true
+    FixedIncomeRedemptionSimRequest:
+      type: object
+      required: [principal, rateAnnual, daysHeld, iofTableDay]
+      properties:
+        principal:
+          $ref: "#/components/schemas/Decimal"
+        rateAnnual:
+          $ref: "#/components/schemas/Decimal"
+        daysHeld:
+          type: integer
+          minimum: 1
+        iofTableDay:
+          type: integer
+          minimum: 0
+          maximum: 30
+          description: Dia na tabela regressiva IOF (0 = isento)
+    FixedIncomeRedemptionSimResponse:
+      type: object
+      required: [grossInterest, iof, ir, netProceeds, effectiveRate]
+      properties:
+        grossInterest:
+          $ref: "#/components/schemas/Decimal"
+        iof:
+          $ref: "#/components/schemas/Decimal"
+        ir:
+          $ref: "#/components/schemas/Decimal"
+        netProceeds:
+          $ref: "#/components/schemas/Decimal"
+        effectiveRate:
+          $ref: "#/components/schemas/Decimal"
+    EquityGainsResponse:
+      type: object
+      required: [yearMonth, soldTotal, taxableGain, exemptUnder20k, irDue]
+      properties:
+        yearMonth:
+          type: string
+        soldTotal:
+          $ref: "#/components/schemas/Decimal"
+        taxableGain:
+          $ref: "#/components/schemas/Decimal"
+        exemptUnder20k:
+          type: boolean
+        irDue:
+          $ref: "#/components/schemas/Decimal"
+    TaxApurationResponse:
+      type: object
+      required: [yearMonth, modalities, irrfCredit, irDue, darf]
+      properties:
+        yearMonth:
+          type: string
+        modalities:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxModalityLine"
+        irrfCredit:
+          $ref: "#/components/schemas/Decimal"
+        irDue:
+          $ref: "#/components/schemas/Decimal"
+        darfCarryIn:
+          $ref: "#/components/schemas/Decimal"
+        darf:
+          $ref: "#/components/schemas/DarfGuide"
+          nullable: true
+        darfCarryOut:
+          $ref: "#/components/schemas/Decimal"
+    TaxModalityLine:
+      type: object
+      required: [modality, soldTotal, taxableGain, lossOffset, irRate, irDue, exemptUnder20k]
+      properties:
+        modality:
+          type: string
+          enum: [SWING_EQUITY, DAY_TRADE, FII, ETF, DERIVATIVE_SWING, DERIVATIVE_DAY]
+        soldTotal:
+          $ref: "#/components/schemas/Decimal"
+          description: Volume bruto alienado no mês na modalidade (qty × preço, sem custos)
+        taxableGain:
+          $ref: "#/components/schemas/Decimal"
+        lossOffset:
+          $ref: "#/components/schemas/Decimal"
+        irRate:
+          $ref: "#/components/schemas/Decimal"
+        irDue:
+          $ref: "#/components/schemas/Decimal"
+        exemptUnder20k:
+          type: boolean
+    DarfGuide:
+      type: object
+      required: [code, amount, yearMonth, status]
+      properties:
+        code:
+          type: string
+          description: "6015"
+        amount:
+          $ref: "#/components/schemas/Decimal"
+          description: Truncado a centavos
+        yearMonth:
+          type: string
+        status:
+          type: string
+          enum: [ISSUED, CARRIED]
+        dueDate:
+          type: string
+          format: date
+          nullable: true
+    TreasuryDurationView:
+      type: object
+      required: [id, title, macaulayYears, modifiedDuration, dv01]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        macaulayYears:
+          $ref: "#/components/schemas/Decimal"
+        modifiedDuration:
+          $ref: "#/components/schemas/Decimal"
+        dv01:
+          $ref: "#/components/schemas/Decimal"
+    AllocationSuggestionRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          $ref: "#/components/schemas/Decimal"
+        targetEquityPct:
+          $ref: "#/components/schemas/Decimal"
+          description: Fração alvo em renda variável (0–1); default 0.6
+    AllocationSuggestionResponse:
+      type: object
+      required: [suggestions]
+      properties:
+        suggestions:
+          type: array
+          items:
+            type: object
+            required: [ticker, amount, rationale]
+            properties:
+              ticker:
+                type: string
+              amount:
+                $ref: "#/components/schemas/Decimal"
+              rationale:
+                type: string
+    WatchlistItem:
+      type: object
+      required: [ticker, assetClass]
+      properties:
+        ticker:
+          type: string
+        assetClass:
+          type: string
+          enum: [EQUITY, FII, BDR, ETF, TREASURY]
+        name:
+          type: string
+    MarketClosesIngestRequest:
+      type: object
+      required: [rows]
+      properties:
+        rows:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [ticker, date, close, source]
+            properties:
+              ticker:
+                type: string
+              date:
+                type: string
+                format: date
+              close:
+                $ref: "#/components/schemas/Decimal"
+              source:
+                type: string
+    PrivacyEraseResponse:
+      type: object
+      required: [status, purgeAfter]
+      properties:
+        status:
+          type: string
+          enum: [scheduled]
+        purgeAfter:
+          type: string
+          format: date-time
+
+    EquityMetrics:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [EQUITY]
+        lpa:
+          $ref: "#/components/schemas/Decimal"
+        vpa:
+          $ref: "#/components/schemas/Decimal"
+        roe:
+          $ref: "#/components/schemas/Decimal"
+        pl:
+          $ref: "#/components/schemas/Decimal"
+        pvp:
+          $ref: "#/components/schemas/Decimal"
+        evEbit:
+          $ref: "#/components/schemas/Decimal"
+        evEbitda:
+          $ref: "#/components/schemas/Decimal"
+        roic:
+          $ref: "#/components/schemas/Decimal"
+        roce:
+          $ref: "#/components/schemas/Decimal"
+        margemBruta:
+          $ref: "#/components/schemas/Decimal"
+        margemEbitda:
+          $ref: "#/components/schemas/Decimal"
+        margemEbit:
+          $ref: "#/components/schemas/Decimal"
+        margemLiquida:
+          $ref: "#/components/schemas/Decimal"
+        dlEbitda:
+          $ref: "#/components/schemas/Decimal"
+        payout:
+          $ref: "#/components/schemas/Decimal"
+    FiiMetricsPanel:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [FII]
+        vacanciaFisica:
+          $ref: "#/components/schemas/Decimal"
+        vacanciaFinanceira:
+          $ref: "#/components/schemas/Decimal"
+        vacanciaPonderada:
+          $ref: "#/components/schemas/Decimal"
+        capRate:
+          $ref: "#/components/schemas/Decimal"
+        waultMonths:
+          $ref: "#/components/schemas/Decimal"
+        pvp:
+          $ref: "#/components/schemas/Decimal"
+        tenantConcentrationTopN:
+          $ref: "#/components/schemas/Decimal"
+        atypicalContractsPct:
+          $ref: "#/components/schemas/Decimal"
+        noiAnnualizedProjected:
+          $ref: "#/components/schemas/Decimal"
+        physicalPortfolioEv:
+          $ref: "#/components/schemas/Decimal"
+    EtfMetrics:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [ETF]
+        lastClose:
+          $ref: "#/components/schemas/Decimal"
+        dividendYield:
+          $ref: "#/components/schemas/Decimal"
+    FiiHealthScore:
+      type: object
+      required: [passed, gates]
+      properties:
+        passed:
+          type: boolean
+        gates:
+          type: array
+          items:
+            type: object
+            required: [id, label, passed, observed, threshold]
+            properties:
+              id:
+                type: string
+              label:
+                type: string
+              passed:
+                type: boolean
+              observed:
+                $ref: "#/components/schemas/Decimal"
+                nullable: true
+              threshold:
+                type: string
+    AssetIncomeMetrics:
+      type: object
+      properties:
+        dividendYield:
+          $ref: "#/components/schemas/Decimal"
+        dividendYieldProjected:
+          $ref: "#/components/schemas/Decimal"
+        dpa3y:
+          $ref: "#/components/schemas/Decimal"
+        dpa5y:
+          $ref: "#/components/schemas/Decimal"
+    TreasuryShock:
+      type: object
+      required: [bps, puDelta, valueDelta]
+      properties:
+        bps:
+          type: integer
+        puDelta:
+          $ref: "#/components/schemas/Decimal"
+        valueDelta:
+          $ref: "#/components/schemas/Decimal"
+
+    PortfolioPerformanceChart:
+      type: object
+      description: RF47 TWR cumulativo event-based (não Δ patrimônio bruto)
+      properties:
+        nature:
+          type: string
+          enum: [PORTFOLIO_TWR_EVENT_BASED]
+        notWealthDelta:
+          type: boolean
+        valuationMix:
+          type: string
+          nullable: true
+        bases:
+          type: array
+          items:
+            type: string
+        limitations:
+          type: array
+          items:
+            type: string
+        series:
+          type: array
+          items:
+            type: object
+            required: [asOf, status]
+            properties:
+              asOf:
+                type: string
+                format: date
+              portfolioTwrCumulative:
+                $ref: "#/components/schemas/Decimal"
+                nullable: true
+              byClass:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/Decimal"
+              status:
+                type: string
+                enum: [OK, UNAVAILABLE, PARTIAL_COVERAGE]
+        benchmarks:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        cdiPeriodReturnPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+
+    PortfolioRiskMetrics:
+      type: object
+      required: [status, limitations]
+      description: >
+        Vol/MDD sobre retornos diários de close listado. Correlação só em retornos
+        (nunca em níveis de preço). RF carrego → NOT_COMPARABLE_CARRY.
+      properties:
+        status:
+          type: string
+          enum:
+            - OK
+            - INSUFFICIENT_HISTORY
+            - NOT_COMPARABLE_CARRY
+            - PARTIAL_COVERAGE
+            - UNAVAILABLE
+        asOf:
+          type: string
+          format: date
+        window:
+          type: object
+          properties:
+            from:
+              type: string
+              format: date
+              nullable: true
+            to:
+              type: string
+              format: date
+              nullable: true
+            returnCount:
+              type: integer
+            minRequired:
+              type: integer
+            frequency:
+              type: string
+              enum: [DAILY]
+            annualization:
+              type: string
+              enum: [SQRT_252]
+        volatilityAnnualizedPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        maxDrawdownPercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        correlation:
+          type: object
+          nullable: true
+          properties:
+            status:
+              type: string
+              enum: [OK, INSUFFICIENT_HISTORY, BLOCKED]
+            pairs:
+              type: array
+              items:
+                type: object
+                required: [tickerA, tickerB, correlation]
+                properties:
+                  tickerA:
+                    type: string
+                  tickerB:
+                    type: string
+                  correlation:
+                    $ref: "#/components/schemas/Decimal"
+        seriesQualification:
+          type: object
+          properties:
+            seriesNature:
+              type: string
+            closeKind:
+              type: string
+            homologationStatus:
+              type: string
+              enum: [HOMOLOGATED, NOT_HOMOLOGATED, TEST_FIXTURE]
+            usableForDecision:
+              type: boolean
+            eventsApplied:
+              type: integer
+            note:
+              type: string
+        var95:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [BLOCKED, OK, INSUFFICIENT_HISTORY]
+            reason:
+              type: string
+            method:
+              type: string
+            confidence:
+              type: string
+            unit:
+              type: string
+            disclaimer:
+              type: string
+            horizons:
+              type: array
+              items:
+                type: object
+                properties:
+                  du:
+                    type: integer
+                  varPercent:
+                    $ref: "#/components/schemas/Decimal"
+                    nullable: true
+                  limitations:
+                    type: array
+                    items:
+                      type: string
+        markowitz:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [SEE_ENDPOINT, INSUFFICIENT_HISTORY, BLOCKED]
+            endpoint:
+              type: string
+        assets:
+          type: array
+          items:
+            type: object
+            required: [ticker, status]
+            properties:
+              ticker:
+                type: string
+              assetClass:
+                type: string
+              status:
+                type: string
+              returnCount:
+                type: integer
+              volatilityAnnualizedPercent:
+                $ref: "#/components/schemas/Decimal"
+                nullable: true
+              maxDrawdownPercent:
+                $ref: "#/components/schemas/Decimal"
+                nullable: true
+        limitations:
+          type: array
+          items:
+            type: string
+    PortfolioRiskResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [OK, INSUFFICIENT_HISTORY]
+        limitations:
+          type: array
+          items:
+            type: string
+        premises:
+          type: array
+          items:
+            type: string
+        frontier:
+          type: array
+          items:
+            type: object
+            required: [risk, expectedReturn]
+            properties:
+              risk:
+                $ref: "#/components/schemas/Decimal"
+              expectedReturn:
+                $ref: "#/components/schemas/Decimal"
+              weights:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/Decimal"
+        minVariance:
+          $ref: "#/components/schemas/RiskPortfolioPoint"
+        maxSharpe:
+          $ref: "#/components/schemas/RiskPortfolioPoint"
+        betas:
+          type: object
+          properties:
+            ibov:
+              $ref: "#/components/schemas/Decimal"
+            ifix:
+              $ref: "#/components/schemas/Decimal"
+        correlation:
+          type: array
+          items:
+            type: object
+            required: [tickerA, tickerB, correlation]
+            properties:
+              tickerA:
+                type: string
+              tickerB:
+                type: string
+              correlation:
+                $ref: "#/components/schemas/Decimal"
+    RiskPortfolioPoint:
+      type: object
+      required: [risk, expectedReturn, weights]
+      properties:
+        risk:
+          $ref: "#/components/schemas/Decimal"
+        expectedReturn:
+          $ref: "#/components/schemas/Decimal"
+        sharpe:
+          $ref: "#/components/schemas/Decimal"
+        weights:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/Decimal"
+    OptionPanelResponse:
+      type: object
+      required: [positions]
+      properties:
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/OptionPositionView"
+    OptionPositionView:
+      type: object
+      required: [optionTicker, underlying, side, optionType, status]
+      properties:
+        optionTicker:
+          type: string
+        underlying:
+          type: string
+        side:
+          type: string
+          enum: [BUY, SELL]
+        optionType:
+          type: string
+          enum: [CALL, PUT]
+        strike:
+          $ref: "#/components/schemas/Decimal"
+        expiry:
+          type: string
+          format: date
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+        premium:
+          $ref: "#/components/schemas/Decimal"
+        status:
+          type: string
+          enum: [OK, INAPPLICABLE]
+        theoreticalPrice:
+          $ref: "#/components/schemas/Decimal"
+        impliedVolatility:
+          $ref: "#/components/schemas/Decimal"
+        moneyness:
+          type: string
+          enum: [ITM, ATM, OTM]
+        greeks:
+          $ref: "#/components/schemas/OptionGreeks"
+        payoff:
+          $ref: "#/components/schemas/OptionPayoff"
+          nullable: true
+    OptionGreeks:
+      type: object
+      properties:
+        delta:
+          $ref: "#/components/schemas/Decimal"
+        gamma:
+          $ref: "#/components/schemas/Decimal"
+        vega:
+          $ref: "#/components/schemas/Decimal"
+        theta:
+          $ref: "#/components/schemas/Decimal"
+          description: R$ por dia útil (base 252)
+        rho:
+          $ref: "#/components/schemas/Decimal"
+    OptionPayoff:
+      type: object
+      properties:
+        strategy:
+          type: string
+          enum: [COVERED_CALL, CASH_SECURED_PUT]
+        impliedReturn:
+          $ref: "#/components/schemas/Decimal"
+        breakeven:
+          $ref: "#/components/schemas/Decimal"
+        maxLoss:
+          $ref: "#/components/schemas/Decimal"
+    AdminOpsOverview:
+      type: object
+      required: [sourcesActive, sourcesTotal, featuresEnabled, productionCron]
+      properties:
+        sourcesActive:
+          type: integer
+        sourcesTotal:
+          type: integer
+        featuresEnabled:
+          type: integer
+        recentRuns:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        recentAudit:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminAuditEntry"
+        productionCron:
+          type: boolean
+          description: Always false in this increment — no prod cron activation
+    AdminCapabilityStatus:
+      type: object
+      required:
+        - featureKey
+        - label
+        - enabled
+        - adapterImplemented
+        - accessConfigured
+        - testedWithFixture
+        - liveQueryVerified
+        - operationalHomologation
+        - commercialUseStatus
+      properties:
+        featureKey:
+          type: string
+        label:
+          type: string
+        enabled:
+          type: boolean
+          description: Routing toggle — MUST NOT imply homologation
+        adapterImplemented:
+          type: boolean
+        accessConfigured:
+          type: boolean
+        testedWithFixture:
+          type: boolean
+        liveQueryVerified:
+          type: boolean
+        operationalHomologation:
+          type: string
+          enum: [NOT_DECLARED, PENDING, HOMOLOGATED, REJECTED]
+        commercialUseStatus:
+          type: string
+          enum: [NOT_DECLARED, BLOCKED, ALLOWED]
+        primarySlug:
+          type: string
+          nullable: true
+        fallbackSlug:
+          type: string
+          nullable: true
+        lastRunAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastRunStatus:
+          type: string
+          nullable: true
+        lastError:
+          type: string
+          nullable: true
+        coverageNote:
+          type: string
+    AdminAuditEntry:
+      type: object
+      required: [id, tableName, recordId, at]
+      properties:
+        id:
+          type: string
+        tableName:
+          type: string
+        recordId:
+          type: string
+          format: uuid
+        actorUserId:
+          type: string
+          format: uuid
+          nullable: true
+        before:
+          nullable: true
+        after:
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        at:
+          type: string
+          format: date-time
+    AdminDataSourceView:
+      type: object
+      required: [id, slug, name, category, driver, active, isConfigured]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+          enum: [MARKET, LLM, GOVERNMENT]
+        driver:
+          type: string
+        active:
+          type: boolean
+        isConfigured:
+          type: boolean
+        credentialHint:
+          type: string
+          nullable: true
+        baseUrl:
+          type: string
+          nullable: true
+        modelName:
+          type: string
+          nullable: true
+        timeoutMs:
+          type: integer
+          nullable: true
+        rateLimitRpm:
+          type: integer
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+    AdminDataSourceUpsert:
+      type: object
+      required: [slug, name, category, driver]
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+          enum: [MARKET, LLM, GOVERNMENT]
+        driver:
+          type: string
+        active:
+          type: boolean
+        credential:
+          type: string
+          description: Plaintext token; omit to keep existing
+        baseUrl:
+          type: string
+        modelName:
+          type: string
+        timeoutMs:
+          type: integer
+        rateLimitRpm:
+          type: integer
+    AdminConnectionTestResult:
+      type: object
+      required: [ok, latencyMs]
+      properties:
+        ok:
+          type: boolean
+        latencyMs:
+          type: integer
+        message:
+          type: string
+    SeriesIngestTriggerRequest:
+      type: object
+      required: [capability]
+      properties:
+        capability:
+          type: string
+          enum: [CDI, IPCA, SELIC, TREASURY_PU, ETTJ, IPCA_PROJ, LISTED_CLOSE]
+          description: >
+            CDI=SGS 4389; IPCA=IBGE NI; SELIC=SGS 11; TREASURY_PU=PU Venda Manhã;
+            ETTJ=ANBIMA NSS CSV; IPCA_PROJ=ANBIMA indicadores.xls % a.m.;
+            LISTED_CLOSE=brapi OHLCV close (unadjusted) por assetId.
+    SeriesIngestRunView:
+      type: object
+      required: [id, capability, status, startedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        capability:
+          type: string
+          enum: [CDI, IPCA, SELIC, TREASURY_PU, ETTJ, IPCA_PROJ, LISTED_CLOSE]
+        status:
+          type: string
+          enum: [RUNNING, SUCCEEDED, FAILED, SKIPPED]
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        observationsUpserted:
+          type: integer
+        observationsRevised:
+          type: integer
+        errorCode:
+          type: string
+          nullable: true
+        metrics:
+          type: object
+          additionalProperties: true
+          description: fetched, unchanged, lastObservationDate, durationMs. Sem secret.
+    AdminFeatureRoutingView:
+      type: object
+      required: [featureKey, isActive]
+      properties:
+        featureKey:
+          type: string
+          description: Inclui SERIES_CDI, SERIES_IPCA, SERIES_SELIC, SERIES_TREASURY_PU, SERIES_ETTJ, SERIES_IPCA_PROJ, SERIES_LISTED_CLOSE.
+        label:
+          type: string
+        isActive:
+          type: boolean
+        primarySourceId:
+          type: string
+          format: uuid
+          nullable: true
+        fallbackSourceId:
+          type: string
+          format: uuid
+          nullable: true
+        primarySlug:
+          type: string
+          nullable: true
+        fallbackSlug:
+          type: string
+          nullable: true
+    AdminFeatureRoutingUpdate:
+      type: object
+      required: [featureKey, isActive]
+      properties:
+        featureKey:
+          type: string
+        isActive:
+          type: boolean
+        primarySourceId:
+          type: string
+          format: uuid
+          nullable: true
+        fallbackSourceId:
+          type: string
+          format: uuid
+          nullable: true
+    AdminUserView:
+      type: object
+      required: [id, email, name, role, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        trialEndsAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    AdminUserPatch:
+      type: object
+      properties:
+        trialEndsAt:
+          type: string
+          format: date-time
+          nullable: true
+        role:
+          type: string
+          enum: [USER, AUDITOR, SUPPORT, SUPER_ADMIN]
+    AdminSubscriptionView:
+      type: object
+      required: [id, userId, plan, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        userEmail:
+          type: string
+        plan:
+          type: string
+        status:
+          type: string
+        currentPeriodEnd:
+          type: string
+          format: date-time
+          nullable: true
+    AdminSubscriptionPatch:
+      type: object
+      properties:
+        plan:
+          type: string
+          enum: [CORE, EXPERT]
+        status:
+          type: string
+        currentPeriodEnd:
+          type: string
+          format: date-time
+          nullable: true
+    AdminObservabilitySnapshot:
+      type: object
+      required: [connectors]
+      properties:
+        connectors:
+          type: array
+          items:
+            type: object
+            required: [slug, driver]
+            properties:
+              slug:
+                type: string
+              driver:
+                type: string
+              lastOk:
+                type: boolean
+                nullable: true
+              lastLatencyMs:
+                type: integer
+                nullable: true
+              lastCheckedAt:
+                type: string
+                format: date-time
+                nullable: true
+              successRate:
+                type: number
+                nullable: true

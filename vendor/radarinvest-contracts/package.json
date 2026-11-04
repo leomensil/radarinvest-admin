@@ -1,0 +1,48 @@
+{
+  "name": "@leomensil/radarinvest-contracts",
+  "version": "0.8.32",
+  "description": "RadarInvest OpenAPI-derived TypeScript types and Zod schemas",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/leomensil/radarinvest-spec.git",
+    "directory": "packages/contracts"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "openapi.yaml",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/openapi.d.ts",
+      "default": "./dist/openapi.d.ts"
+    },
+    "./zod": {
+      "types": "./dist/zod.d.ts",
+      "import": "./dist/zod.js",
+      "default": "./dist/zod.js"
+    },
+    "./openapi.yaml": "./openapi.yaml"
+  },
+  "types": "./dist/openapi.d.ts",
+  "scripts": {
+    "generate": "node ./scripts/generate.mjs",
+    "prepublishOnly": "npm run generate",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "zod": "^3.23.0 || ^4.0.0"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.9.1",
+    "openapi-zod-client": "^1.18.3",
+    "typescript": "^5.9.2",
+    "zod": "^3.25.76"
+  }
+}
