@@ -1,12 +1,14 @@
 openapi: 3.1.0
 info:
   title: RadarInvest API
-  version: 0.8.34
+  version: 0.8.35
   description: >
     Contrato canônico Core (MVP). Implementado por radarinvest-api.
     Decimal monetário como string. Provenance obrigatória em métricas (BR-010).
     CSV/XLSX canônico de import (RF04): Ticker;Evento;Quantidade;Preço;Custos;Data;Instituição
     (C/V, números BR, data DD/MM/AAAA). Legado EN: ticker,eventType,...,tradeDate[,custodian].
+    IA 0.8.35: insightClass + publishableAsGenuine — DETERMINISTIC nunca genuíno.
+
 servers:
   - url: https://api.radarinvest.app.br
     description: production
@@ -1511,8 +1513,10 @@ paths:
       summary: Pipeline Inc.13 — grounding pela API + adaptador (DETERMINISTIC default)
       description: >
         portfolioIds obrigatório (≥1). Adapter DETERMINISTIC é o caminho testável
-        (productionInsight=false). EXTERNAL exige AI_ALLOW_EXTERNAL=1 e credencial;
-        sem isso retorna 503 explícito — nunca sucesso simulado no produto.
+        (insightClass=TEST_DETERMINISTIC, productionInsight=false, publishableAsGenuine=false —
+        flags estruturais, não apenas copy). EXTERNAL exige AI_ALLOW_EXTERNAL=1 e credencial;
+        sem isso retorna 503 explícito — nunca sucesso simulado no produto. Fallback
+        DETERMINISTIC após falha EXTERNAL não publica como insight genuíno.
       requestBody:
         required: true
         content:
@@ -4996,7 +5000,18 @@ components:
           description: Pergunta do usuário (sem PII desnecessária; tratado como dado, não instrução)
     DiagnosisOutput:
       type: object
-      required: [fact, rationale, guidance, disclaimers, forbiddenTermsHit, citations, productionInsight]
+      required:
+        [
+          fact,
+          rationale,
+          guidance,
+          disclaimers,
+          forbiddenTermsHit,
+          citations,
+          productionInsight,
+          publishableAsGenuine,
+          insightClass,
+        ]
       properties:
         fact:
           type: string
@@ -5027,6 +5042,10 @@ components:
         adapter:
           type: string
           enum: [DETERMINISTIC, EXTERNAL]
+        insightClass:
+          type: string
+          enum: [TEST_DETERMINISTIC, EXTERNAL]
+          description: Classe estrutural; TEST_DETERMINISTIC nunca é insight de produção
         scopePortfolioIds:
           type: array
           items:
@@ -5046,11 +5065,26 @@ components:
         productionInsight:
           type: boolean
           description: false para DETERMINISTIC / teste; true só após validação externa autorizada
+        publishableAsGenuine:
+          type: boolean
+          description: >
+            false sempre para DETERMINISTIC. true só quando adapter efetivo EXTERNAL
+            e productionInsight=true. Cliente NÃO deve tratar copy como prova.
         status:
           type: string
     AiInsightRunView:
       type: object
-      required: [id, adapter, status, asOf, productionInsight, createdAt]
+      required:
+        [
+          id,
+          adapter,
+          status,
+          asOf,
+          productionInsight,
+          publishableAsGenuine,
+          insightClass,
+          createdAt,
+        ]
       properties:
         id:
           type: string
@@ -5062,6 +5096,9 @@ components:
             format: uuid
         adapter:
           type: string
+        insightClass:
+          type: string
+          enum: [TEST_DETERMINISTIC, EXTERNAL]
         status:
           type: string
         modelName:
@@ -5083,6 +5120,8 @@ components:
           type: string
           nullable: true
         productionInsight:
+          type: boolean
+        publishableAsGenuine:
           type: boolean
         limitations:
           type: array

@@ -1118,7 +1118,7 @@ export interface paths {
         put?: never;
         /**
          * Pipeline Inc.13 — grounding pela API + adaptador (DETERMINISTIC default)
-         * @description portfolioIds obrigatório (≥1). Adapter DETERMINISTIC é o caminho testável (productionInsight=false). EXTERNAL exige AI_ALLOW_EXTERNAL=1 e credencial; sem isso retorna 503 explícito — nunca sucesso simulado no produto.
+         * @description portfolioIds obrigatório (≥1). Adapter DETERMINISTIC é o caminho testável (insightClass=TEST_DETERMINISTIC, productionInsight=false, publishableAsGenuine=false — flags estruturais, não apenas copy). EXTERNAL exige AI_ALLOW_EXTERNAL=1 e credencial; sem isso retorna 503 explícito — nunca sucesso simulado no produto. Fallback DETERMINISTIC após falha EXTERNAL não publica como insight genuíno.
          */
         post: operations["diagnose"];
         delete?: never;
@@ -3028,6 +3028,11 @@ export interface components {
             runId?: string;
             /** @enum {string} */
             adapter?: "DETERMINISTIC" | "EXTERNAL";
+            /**
+             * @description Classe estrutural; TEST_DETERMINISTIC nunca é insight de produção
+             * @enum {string}
+             */
+            insightClass: "TEST_DETERMINISTIC" | "EXTERNAL";
             scopePortfolioIds?: string[];
             /** Format: date-time */
             generatedAt?: string;
@@ -3035,6 +3040,8 @@ export interface components {
             evidenceIds?: string[];
             /** @description false para DETERMINISTIC / teste; true só após validação externa autorizada */
             productionInsight: boolean;
+            /** @description false sempre para DETERMINISTIC. true só quando adapter efetivo EXTERNAL e productionInsight=true. Cliente NÃO deve tratar copy como prova. */
+            publishableAsGenuine: boolean;
             status?: string;
         };
         AiInsightRunView: {
@@ -3042,6 +3049,8 @@ export interface components {
             id: string;
             portfolioIds?: string[];
             adapter: string;
+            /** @enum {string} */
+            insightClass: "TEST_DETERMINISTIC" | "EXTERNAL";
             status: string;
             modelName?: string | null;
             /** Format: date-time */
@@ -3051,6 +3060,7 @@ export interface components {
             completionTokens?: number | null;
             estimatedCostUsd?: string | null;
             productionInsight: boolean;
+            publishableAsGenuine: boolean;
             limitations?: string[];
             evidenceIds?: string[];
             /** Format: date-time */
