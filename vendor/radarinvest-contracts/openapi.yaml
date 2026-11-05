@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: RadarInvest API
-  version: 0.8.35
+  version: 0.8.38
   description: >
     Contrato canônico Core (MVP). Implementado por radarinvest-api.
     Decimal monetário como string. Provenance obrigatória em métricas (BR-010).
@@ -612,6 +612,9 @@ paths:
                 confirmEmbeddedHistory:
                   type: string
                   description: Não autoriza merge. Histórico com tradeDate <= cutDate no mesmo ativo responde 422 CONFLICT_EMBEDDED_HISTORY (manter snapshot XOR reconstruir pelo histórico). True não soma nem substitui.
+                sheetName:
+                  type: string
+                  description: Nome da folha XLSX (default = primeira). Ignorado em CSV/Sinacor.
                 file:
                   type: string
                   format: binary
@@ -861,7 +864,22 @@ paths:
     get:
       tags: [dividends]
       operationId: getDividendSeasonality
-      summary: Matriz mês × ticker de proventos creditados (RF12)
+      summary: Matriz mês × ano de proventos creditados (RF12 / BR-234)
+      parameters:
+        - name: fromYear
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1990
+            maximum: 2100
+        - name: toYear
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1990
+            maximum: 2100
       responses:
         "200":
           description: OK
@@ -1656,13 +1674,77 @@ paths:
                 items:
                   $ref: "#/components/schemas/TreasuryDurationView"
 
+  /portfolios/{portfolioId}/allocation/targets:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [allocation]
+      operationId: getAllocationTargets
+      summary: Metas explícitas por classe (RF24; frações 0–1)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AllocationTargets"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [allocation]
+      operationId: putAllocationTargets
+      summary: Grava metas (exige portfolio.write; bloqueado em Modo Consulta)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AllocationTargetsPut"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AllocationTargets"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /portfolios/{portfolioId}/allocation/simulate:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    post:
+      tags: [allocation]
+      operationId: simulateAllocationContribution
+      summary: Simulação de aporte (RF33) — sem ordem, sem mutação
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AllocationSimulateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AllocationSimulateResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /portfolios/{portfolioId}/allocation/suggestion:
     parameters:
       - $ref: "#/components/parameters/PortfolioId"
     post:
       tags: [allocation]
       operationId: suggestAllocation
-      summary: Aportes inteligentes (RF33)
+      summary: >
+        Legado RF33 — preferir /allocation/simulate. Sem metas explícitas retorna
+        TARGETS_REQUIRED (não aplica filosofia automaticamente).
+      deprecated: true
       requestBody:
         required: true
         content:
@@ -1676,6 +1758,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AllocationSuggestionResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /portfolios/{portfolioId}/watchlist:
     parameters:
@@ -2090,6 +2174,21 @@ paths:
                   $ref: "#/components/schemas/AdminFeatureRoutingView"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /admin/series-ingest/orchestration:
+    get:
+      tags: [admin]
+      operationId: getAdminSeriesOrchestration
+      summary: Grafo de fases/deps por capacidade + papéis de slot (Inc.5 / BR-236)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesOrchestrationView"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /admin/series-ingest/runs:
     get:
       tags: [admin]
@@ -3429,6 +3528,15 @@ components:
           description: Até 20 linhas de amostra (texto bruto)
         columnMapping:
           $ref: "#/components/schemas/ImportColumnMapping"
+        sheetNames:
+          type: array
+          items:
+            type: string
+          description: Folhas disponíveis no XLSX (quando aplicável)
+        sheetName:
+          type: string
+          nullable: true
+          description: Folha selecionada no job
         errorMessage:
           type: string
           nullable: true
@@ -3463,6 +3571,21 @@ components:
       properties:
         columnMapping:
           $ref: "#/components/schemas/ImportColumnMapping"
+        numberLocale:
+          type: string
+          enum: [br, en]
+          description: Override; omitido = auto-detecção
+        dateFormat:
+          type: string
+          enum: [dmy, mdy, iso]
+          description: Override; omitido = auto-detecção
+        delimiter:
+          type: string
+          enum: [";", ","]
+          description: Override do delimitador bruto (CSV); XLSX ignora
+        sheetName:
+          type: string
+          description: Reextrai folha XLSX a partir do arquivo armazenado no job
     ImportPreviewRow:
       type: object
       required: [line, valid]
@@ -3490,6 +3613,11 @@ components:
         error:
           type: string
           nullable: true
+        fieldErrors:
+          type: object
+          additionalProperties:
+            type: string
+          description: Erros por campo (ex. tradeDate, quantity); complementar a error
         costBasisUnknown:
           type: boolean
         limitations:
@@ -3676,24 +3804,100 @@ components:
           $ref: "#/components/schemas/Provenance"
     DividendSeasonality:
       type: object
-      required: [year, cells]
+      required:
+        - cells
+        - announcedCells
+        - monthlyTotals
+        - yearlyTotals
+        - yearsCovered
+        - coverageNote
+      description: >
+        Matriz mês×ano de proventos creditados (RF12/BR-234). Ausência ≠ R$ 0.
+        Não é previsão (RF13 separado). Campo legado `year` omitido quando multi-ano.
       properties:
-        year:
-          type: integer
-        cells:
+        historyFrom:
+          type: string
+          format: date
+          nullable: true
+        yearsCovered:
           type: array
           items:
+            type: integer
+        coverageNote:
+          type: string
+        cells:
+          type: array
+          description: Recebido (CREDITED) apenas
+          items:
             type: object
-            required: [ticker, month, amountNet]
+            required: [assetId, ticker, month, year, amountNet]
             properties:
+              assetId:
+                type: string
+                format: uuid
               ticker:
                 type: string
+              assetClass:
+                $ref: "#/components/schemas/AssetClass"
               month:
                 type: integer
                 minimum: 1
                 maximum: 12
+              year:
+                type: integer
               amountNet:
                 $ref: "#/components/schemas/Decimal"
+        announcedCells:
+          type: array
+          description: Anunciado/previsto segregado; não entra nos totais de recebido
+          items:
+            type: object
+            required: [assetId, ticker, month, year, amountNet]
+            properties:
+              assetId:
+                type: string
+                format: uuid
+              ticker:
+                type: string
+              assetClass:
+                $ref: "#/components/schemas/AssetClass"
+              month:
+                type: integer
+                minimum: 1
+                maximum: 12
+              year:
+                type: integer
+              amountNet:
+                $ref: "#/components/schemas/Decimal"
+        monthlyTotals:
+          type: array
+          items:
+            type: object
+            required: [month, amountNet]
+            properties:
+              month:
+                type: integer
+                minimum: 1
+                maximum: 12
+              year:
+                type: integer
+                description: Presente quando o total é por mês-ano; omitido se agregado só por mês
+              amountNet:
+                $ref: "#/components/schemas/Decimal"
+        yearlyTotals:
+          type: array
+          items:
+            type: object
+            required: [year, amountNet]
+            properties:
+              year:
+                type: integer
+              amountNet:
+                $ref: "#/components/schemas/Decimal"
+        year:
+          type: integer
+          deprecated: true
+          description: Legado stub ano único; preferir yearsCovered
     DividendProjection:
       type: object
       required: [items, disclaimer]
@@ -4845,10 +5049,18 @@ components:
       enum: [BAZIN, GRAHAM_CLASSIC, GRAHAM_ETTJ, GORDON, SECTOR_MULTIPLES, EARNINGS_YIELD]
     CeilingPriceRequest:
       type: object
-      required: [ticker, methods, safetyMargin]
+      required: [methods, safetyMargin]
       properties:
         ticker:
           type: string
+          description: Ticker real; omitir se scenario=true com inputs controlados
+        scenario:
+          type: boolean
+          description: true = entradas controladas; resultado SCENARIO_ONLY ≠ homologação
+        inputs:
+          type: object
+          description: Entradas controladas (LPA, VPA, D0, g, k, …) quando scenario=true
+          additionalProperties: true
         methods:
           type: array
           items:
@@ -4858,9 +5070,15 @@ components:
           description: Fração 0-1 (padrão 0.20)
     CeilingPriceResponse:
       type: object
-      required: [ticker, results, opportunity]
+      required: [results, opportunity, disclaimer]
       properties:
         ticker:
+          type: string
+          nullable: true
+        mode:
+          type: string
+          enum: [SCENARIO_ONLY, ASSET_LIVE]
+        disclaimer:
           type: string
         results:
           type: array
@@ -4872,7 +5090,10 @@ components:
                 $ref: "#/components/schemas/ValuationMethod"
               status:
                 type: string
-                enum: [OK, INAPPLICABLE]
+                enum: [OK, INAPPLICABLE, UNAVAILABLE, NOT_APPLICABLE]
+              detailCode:
+                type: string
+                nullable: true
               ceiling:
                 $ref: "#/components/schemas/Decimal"
               provenance:
@@ -5287,6 +5508,9 @@ components:
       type: object
       required: [suggestions]
       properties:
+        code:
+          type: string
+          description: TARGETS_REQUIRED quando metas ausentes
         suggestions:
           type: array
           items:
@@ -5299,6 +5523,114 @@ components:
                 $ref: "#/components/schemas/Decimal"
               rationale:
                 type: string
+    AllocationTargetsPut:
+      type: object
+      required: [classTargets]
+      properties:
+        classTargets:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/Decimal"
+          description: Frações 0–1 por classe (EQUITY, FII, FIXED_INCOME, CASH, …); soma=1
+        assetTargets:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/Decimal"
+          description: Frações opcionais por ticker (⊆ classe)
+        bands:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              lo:
+                $ref: "#/components/schemas/Decimal"
+              hi:
+                $ref: "#/components/schemas/Decimal"
+        objective:
+          type: string
+          enum: [MINIMIZE_CLASS_GAP_L1_NO_SELL]
+          default: MINIMIZE_CLASS_GAP_L1_NO_SELL
+    AllocationTargets:
+      allOf:
+        - $ref: "#/components/schemas/AllocationTargetsPut"
+        - type: object
+          required: [unit, updatedAt]
+          properties:
+            unit:
+              type: string
+              enum: [FRACTION_0_1]
+            updatedAt:
+              type: string
+              format: date-time
+    AllocationSimulateRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          $ref: "#/components/schemas/Decimal"
+        asOf:
+          type: string
+          format: date
+        classTargets:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/Decimal"
+          description: Override opcional; senão usa metas persistidas
+    AllocationSimulateResponse:
+      type: object
+      required: [objective, unit, allocations, assumptions, limitations, mutatesPortfolio]
+      properties:
+        objective:
+          type: string
+        unit:
+          type: string
+          enum: [FRACTION_0_1]
+        mutatesPortfolio:
+          type: boolean
+          description: Sempre false
+        code:
+          type: string
+          nullable: true
+        residualCash:
+          $ref: "#/components/schemas/Decimal"
+        unpricedResidual:
+          $ref: "#/components/schemas/Decimal"
+        allocations:
+          type: array
+          items:
+            type: object
+            required: [ticker, amount, class]
+            properties:
+              ticker:
+                type: string
+              class:
+                type: string
+              amount:
+                $ref: "#/components/schemas/Decimal"
+              priceRef:
+                $ref: "#/components/schemas/Decimal"
+                nullable: true
+              priceSource:
+                type: string
+                nullable: true
+        excluded:
+          type: array
+          items:
+            type: object
+            required: [ticker, reason]
+            properties:
+              ticker:
+                type: string
+              reason:
+                type: string
+        assumptions:
+          type: array
+          items:
+            type: string
+        limitations:
+          type: array
+          items:
+            type: string
     WatchlistItem:
       type: object
       required: [ticker, assetClass]
@@ -5419,6 +5751,34 @@ components:
       properties:
         passed:
           type: boolean
+          description: Travas estruturais BR-038 (exclui alerta de concentração parametrizado)
+        concentrationAlert:
+          type: object
+          description: >
+            Alerta parametrizado. threshold é fração 0–1 (default 0.2 = 20%, Blueprint §3.3);
+            não é regra universal. unit sempre FRACTION_0_1.
+          properties:
+            threshold:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: Fração 0–1 (0.2 ≡ 20%)
+            unit:
+              type: string
+              enum: [FRACTION_0_1]
+            source:
+              type: string
+            triggered:
+              type: boolean
+            unavailable:
+              type: boolean
+            applicability:
+              type: string
+              enum: [OK, NOT_APPLICABLE, SEGMENT_UNKNOWN, APPLICABLE_MISSING, STALE]
+        segmentKind:
+          type: string
+          enum: [BRICK, PAPER, HYBRID, UNKNOWN]
+          nullable: true
         gates:
           type: array
           items:
@@ -5551,6 +5911,36 @@ components:
         maxDrawdownPercent:
           $ref: "#/components/schemas/Decimal"
           nullable: true
+        maxDrawdownEpisode:
+          type: object
+          nullable: true
+          description: >
+            MDD temporal (BR-231). Índices em sessões da série de retornos;
+            recovered=false se ainda underwater. Não usa dias corridos.
+          properties:
+            maxDrawdownPercent:
+              $ref: "#/components/schemas/Decimal"
+            peakIndex:
+              type: integer
+            troughIndex:
+              type: integer
+            recoveryIndex:
+              type: integer
+              nullable: true
+            recovered:
+              type: boolean
+            sessionsToTrough:
+              type: integer
+            sessionsToRecovery:
+              type: integer
+              nullable: true
+            sessionsUnderwater:
+              type: integer
+            calendarBasis:
+              type: string
+              enum: [SESSIONS]
+            note:
+              type: string
         correlation:
           type: object
           nullable: true
@@ -6000,7 +6390,50 @@ components:
         metrics:
           type: object
           additionalProperties: true
-          description: fetched, unchanged, lastObservationDate, durationMs. Sem secret.
+          description: >
+            fetched, unchanged, lastObservationDate, durationMs, phase, attempt,
+            sourceLag, coverageNote, consumersReprocessed. Sem secret.
+    SeriesOrchestrationView:
+      type: object
+      required: [capabilities, slotRoles, productionCronEnabled]
+      properties:
+        productionCronEnabled:
+          type: boolean
+          description: true só se SERIES_INGEST_ENABLED=1 (corte default false)
+        slotRoles:
+          type: array
+          items:
+            type: object
+            required: [slot, role]
+            properties:
+              slot:
+                type: string
+                description: HH:MM
+              role:
+                type: string
+                enum: [INTRADAY_OBSERVE, TREASURY_PU_MORNING, SESSION_CLOSE, CUSTOM]
+        capabilities:
+          type: array
+          items:
+            type: object
+            required: [capability, phases, consumers]
+            properties:
+              capability:
+                type: string
+              phases:
+                type: array
+                items:
+                  type: string
+                  enum: [COLLECT, VALIDATE_NORMALIZE, PUBLISH, REPROCESS_CONSUMERS, NOTIFY]
+              consumers:
+                type: array
+                items:
+                  type: string
+              independentOf:
+                type: array
+                items:
+                  type: string
+                description: Capacidades que não bloqueiam esta
     AdminFeatureRoutingView:
       type: object
       required: [featureKey, isActive]

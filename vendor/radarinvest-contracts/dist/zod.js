@@ -601,6 +601,7 @@ const createImportJob_Body = z
     ledgerMode: z.enum(["historical", "initial_position"]).optional(),
     cutDate: z.string().optional(),
     confirmEmbeddedHistory: z.string().optional(),
+    sheetName: z.string().optional(),
     file: z.instanceof(File),
   })
   .passthrough();
@@ -617,6 +618,7 @@ const ImportPreviewRow = z
     custodian: z.string().optional(),
     valid: z.boolean(),
     error: z.string().nullish(),
+    fieldErrors: z.record(z.string()).optional(),
     costBasisUnknown: z.boolean().optional(),
     limitations: z.array(z.string()).optional(),
     possibleDuplicate: z.boolean().optional(),
@@ -660,12 +662,20 @@ const ImportJob = z
     rawHeaders: z.array(z.string()).optional(),
     rawSampleRows: z.array(z.array(z.string())).optional(),
     columnMapping: ImportColumnMapping.optional(),
+    sheetNames: z.array(z.string()).optional(),
+    sheetName: z.string().nullish(),
     errorMessage: z.string().nullish(),
   })
   .passthrough();
 
 const ImportColumnMappingRequest = z
-  .object({ columnMapping: ImportColumnMapping })
+  .object({
+    columnMapping: ImportColumnMapping,
+    numberLocale: z.enum(["br", "en"]).optional(),
+    dateFormat: z.enum(["dmy", "mdy", "iso"]).optional(),
+    delimiter: z.enum([";", ","]).optional(),
+    sheetName: z.string().optional(),
+  })
   .passthrough();
 
 const FinancialInstitution = z
@@ -739,6 +749,25 @@ const EtfMetrics = z
 const FiiHealthScore = z
   .object({
     passed: z.boolean(),
+    concentrationAlert: z
+      .object({
+        threshold: z.number().gte(0).lte(1),
+        unit: z.literal("FRACTION_0_1"),
+        source: z.string(),
+        triggered: z.boolean(),
+        unavailable: z.boolean(),
+        applicability: z.enum([
+          "OK",
+          "NOT_APPLICABLE",
+          "SEGMENT_UNKNOWN",
+          "APPLICABLE_MISSING",
+          "STALE",
+        ]),
+      })
+      .partial()
+      .passthrough()
+      .optional(),
+    segmentKind: z.enum(["BRICK", "PAPER", "HYBRID", "UNKNOWN"]).nullish(),
     gates: z.array(
       z
         .object({
@@ -846,16 +875,46 @@ const YieldOnCost = z
 
 const DividendSeasonality = z
   .object({
-    year: z.number().int(),
+    historyFrom: z.string().nullish(),
+    yearsCovered: z.array(z.number().int()),
+    coverageNote: z.string(),
     cells: z.array(
       z
         .object({
+          assetId: z.string().uuid(),
           ticker: z.string(),
+          assetClass: AssetClass.optional(),
           month: z.number().int().gte(1).lte(12),
+          year: z.number().int(),
           amountNet: Decimal,
         })
         .passthrough()
     ),
+    announcedCells: z.array(
+      z
+        .object({
+          assetId: z.string().uuid(),
+          ticker: z.string(),
+          assetClass: AssetClass.optional(),
+          month: z.number().int().gte(1).lte(12),
+          year: z.number().int(),
+          amountNet: Decimal,
+        })
+        .passthrough()
+    ),
+    monthlyTotals: z.array(
+      z
+        .object({
+          month: z.number().int().gte(1).lte(12),
+          year: z.number().int().optional(),
+          amountNet: Decimal,
+        })
+        .passthrough()
+    ),
+    yearlyTotals: z.array(
+      z.object({ year: z.number().int(), amountNet: Decimal }).passthrough()
+    ),
+    year: z.number().int().optional(),
   })
   .passthrough();
 
@@ -1355,7 +1414,9 @@ const ValuationMethod = z.enum([
 
 const CeilingPriceRequest = z
   .object({
-    ticker: z.string(),
+    ticker: z.string().optional(),
+    scenario: z.boolean().optional(),
+    inputs: z.object({}).partial().passthrough().optional(),
     methods: z.array(ValuationMethod),
     safetyMargin: Decimal,
   })
@@ -1363,12 +1424,20 @@ const CeilingPriceRequest = z
 
 const CeilingPriceResponse = z
   .object({
-    ticker: z.string(),
+    ticker: z.string().nullish(),
+    mode: z.enum(["SCENARIO_ONLY", "ASSET_LIVE"]).optional(),
+    disclaimer: z.string(),
     results: z.array(
       z
         .object({
           method: ValuationMethod,
-          status: z.enum(["OK", "INAPPLICABLE"]),
+          status: z.enum([
+            "OK",
+            "INAPPLICABLE",
+            "UNAVAILABLE",
+            "NOT_APPLICABLE",
+          ]),
+          detailCode: z.string().nullish(),
           ceiling: Decimal.optional(),
           provenance: Provenance.optional(),
         })
@@ -1578,17 +1647,61 @@ const TreasuryDurationView = z
   })
   .passthrough();
 
-const AllocationSuggestionRequest = z
-  .object({ amount: Decimal, targetEquityPct: Decimal.optional() })
+const AllocationTargetsPut = z
+  .object({
+    classTargets: z.record(Decimal),
+    assetTargets: z.record(Decimal).optional(),
+    bands: z
+      .record(z.object({ lo: Decimal, hi: Decimal }).partial().passthrough())
+      .optional(),
+    objective: z
+      .literal("MINIMIZE_CLASS_GAP_L1_NO_SELL")
+      .optional()
+      .default("MINIMIZE_CLASS_GAP_L1_NO_SELL"),
+  })
   .passthrough();
 
-const AllocationSuggestionResponse = z
+const AllocationTargets = AllocationTargetsPut.and(
+  z
+    .object({
+      unit: z.literal("FRACTION_0_1"),
+      updatedAt: z.string().datetime({ offset: true }),
+    })
+    .passthrough()
+);
+
+const AllocationSimulateRequest = z
   .object({
-    suggestions: z.array(
+    amount: Decimal,
+    asOf: z.string().optional(),
+    classTargets: z.record(Decimal).optional(),
+  })
+  .passthrough();
+
+const AllocationSimulateResponse = z
+  .object({
+    objective: z.string(),
+    unit: z.literal("FRACTION_0_1"),
+    mutatesPortfolio: z.boolean(),
+    code: z.string().nullish(),
+    residualCash: Decimal.optional(),
+    unpricedResidual: Decimal.optional(),
+    allocations: z.array(
       z
-        .object({ ticker: z.string(), amount: Decimal, rationale: z.string() })
+        .object({
+          ticker: z.string(),
+          class: z.string(),
+          amount: Decimal,
+          priceRef: Decimal.optional(),
+          priceSource: z.string().nullish(),
+        })
         .passthrough()
     ),
+    excluded: z
+      .array(z.object({ ticker: z.string(), reason: z.string() }).passthrough())
+      .optional(),
+    assumptions: z.array(z.string()),
+    limitations: z.array(z.string()),
   })
   .passthrough();
 
@@ -1648,6 +1761,22 @@ const PortfolioRiskMetrics = z
       .optional(),
     volatilityAnnualizedPercent: Decimal.optional(),
     maxDrawdownPercent: Decimal.optional(),
+    maxDrawdownEpisode: z
+      .object({
+        maxDrawdownPercent: Decimal,
+        peakIndex: z.number().int(),
+        troughIndex: z.number().int(),
+        recoveryIndex: z.number().int().nullable(),
+        recovered: z.boolean(),
+        sessionsToTrough: z.number().int(),
+        sessionsToRecovery: z.number().int().nullable(),
+        sessionsUnderwater: z.number().int(),
+        calendarBasis: z.literal("SESSIONS"),
+        note: z.string(),
+      })
+      .partial()
+      .passthrough()
+      .nullish(),
     correlation: z
       .object({
         status: z.enum(["OK", "INSUFFICIENT_HISTORY", "BLOCKED"]),
@@ -1970,6 +2099,43 @@ const AdminFeatureRoutingUpdate = z
   })
   .passthrough();
 
+const SeriesOrchestrationView = z
+  .object({
+    productionCronEnabled: z.boolean(),
+    slotRoles: z.array(
+      z
+        .object({
+          slot: z.string(),
+          role: z.enum([
+            "INTRADAY_OBSERVE",
+            "TREASURY_PU_MORNING",
+            "SESSION_CLOSE",
+            "CUSTOM",
+          ]),
+        })
+        .passthrough()
+    ),
+    capabilities: z.array(
+      z
+        .object({
+          capability: z.string(),
+          phases: z.array(
+            z.enum([
+              "COLLECT",
+              "VALIDATE_NORMALIZE",
+              "PUBLISH",
+              "REPROCESS_CONSUMERS",
+              "NOTIFY",
+            ])
+          ),
+          consumers: z.array(z.string()),
+          independentOf: z.array(z.string()).optional(),
+        })
+        .passthrough()
+    ),
+  })
+  .passthrough();
+
 const SeriesIngestRunView = z
   .object({
     id: z.string().uuid(),
@@ -2057,6 +2223,21 @@ const AdminObservabilitySnapshot = z
           lastCheckedAt: z.string().datetime({ offset: true }).nullish(),
           successRate: z.number().nullish(),
         })
+        .passthrough()
+    ),
+  })
+  .passthrough();
+
+const AllocationSuggestionRequest = z
+  .object({ amount: Decimal, targetEquityPct: Decimal.optional() })
+  .passthrough();
+
+const AllocationSuggestionResponse = z
+  .object({
+    code: z.string().optional(),
+    suggestions: z.array(
+      z
+        .object({ ticker: z.string(), amount: Decimal, rationale: z.string() })
         .passthrough()
     ),
   })
@@ -2188,8 +2369,10 @@ export const schemas = {
   TreasuryBondHistory,
   TreasuryHistoryResponse,
   TreasuryDurationView,
-  AllocationSuggestionRequest,
-  AllocationSuggestionResponse,
+  AllocationTargetsPut,
+  AllocationTargets,
+  AllocationSimulateRequest,
+  AllocationSimulateResponse,
   WatchlistItem,
   MarketClosesIngestRequest,
   PrivacyEraseResponse,
@@ -2211,6 +2394,7 @@ export const schemas = {
   AdminConnectionTestResult,
   AdminFeatureRoutingView,
   AdminFeatureRoutingUpdate,
+  SeriesOrchestrationView,
   SeriesIngestRunView,
   SeriesIngestTriggerRequest,
   AdminUserView,
@@ -2218,4 +2402,6 @@ export const schemas = {
   AdminSubscriptionView,
   AdminSubscriptionPatch,
   AdminObservabilitySnapshot,
+  AllocationSuggestionRequest,
+  AllocationSuggestionResponse,
 };

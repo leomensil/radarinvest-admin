@@ -660,7 +660,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Matriz mês × ticker de proventos creditados (RF12) */
+        /** Matriz mês × ano de proventos creditados (RF12 / BR-234) */
         get: operations["getDividendSeasonality"];
         put?: never;
         post?: never;
@@ -1241,6 +1241,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/portfolios/{portfolioId}/allocation/targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                portfolioId: components["parameters"]["PortfolioId"];
+            };
+            cookie?: never;
+        };
+        /** Metas explícitas por classe (RF24; frações 0–1) */
+        get: operations["getAllocationTargets"];
+        /** Grava metas (exige portfolio.write; bloqueado em Modo Consulta) */
+        put: operations["putAllocationTargets"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/portfolios/{portfolioId}/allocation/simulate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                portfolioId: components["parameters"]["PortfolioId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Simulação de aporte (RF33) — sem ordem, sem mutação */
+        post: operations["simulateAllocationContribution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/portfolios/{portfolioId}/allocation/suggestion": {
         parameters: {
             query?: never;
@@ -1252,7 +1291,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Aportes inteligentes (RF33) */
+        /**
+         * Legado RF33 — preferir /allocation/simulate. Sem metas explícitas retorna TARGETS_REQUIRED (não aplica filosofia automaticamente).
+         * @deprecated
+         */
         post: operations["suggestAllocation"];
         delete?: never;
         options?: never;
@@ -1568,6 +1610,23 @@ export interface paths {
         };
         get: operations["getAdminFeatureMatrix"];
         put: operations["updateAdminFeatureMatrix"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/series-ingest/orchestration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Grafo de fases/deps por capacidade + papéis de slot (Inc.5 / BR-236) */
+        get: operations["getAdminSeriesOrchestration"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -2230,6 +2289,10 @@ export interface components {
             /** @description Até 20 linhas de amostra (texto bruto) */
             rawSampleRows?: string[][];
             columnMapping?: components["schemas"]["ImportColumnMapping"];
+            /** @description Folhas disponíveis no XLSX (quando aplicável) */
+            sheetNames?: string[];
+            /** @description Folha selecionada no job */
+            sheetName?: string | null;
             errorMessage?: string | null;
         };
         ImportColumnMapping: {
@@ -2243,6 +2306,23 @@ export interface components {
         };
         ImportColumnMappingRequest: {
             columnMapping: components["schemas"]["ImportColumnMapping"];
+            /**
+             * @description Override; omitido = auto-detecção
+             * @enum {string}
+             */
+            numberLocale?: "br" | "en";
+            /**
+             * @description Override; omitido = auto-detecção
+             * @enum {string}
+             */
+            dateFormat?: "dmy" | "mdy" | "iso";
+            /**
+             * @description Override do delimitador bruto (CSV); XLSX ignora
+             * @enum {string}
+             */
+            delimiter?: ";" | ",";
+            /** @description Reextrai folha XLSX a partir do arquivo armazenado no job */
+            sheetName?: string;
         };
         ImportPreviewRow: {
             line: number;
@@ -2257,6 +2337,10 @@ export interface components {
             custodian?: string;
             valid: boolean;
             error?: string | null;
+            /** @description Erros por campo (ex. tradeDate, quantity); complementar a error */
+            fieldErrors?: {
+                [key: string]: string;
+            };
             costBasisUnknown?: boolean;
             /** @description e4-lots-1: positions é relatório; initial_position = SNAPSHOT sem caixa; historical = factos; snapshot ≠ restauro completo. */
             limitations?: string[];
@@ -2358,13 +2442,47 @@ export interface components {
             yocPercent: components["schemas"]["Decimal"];
             provenance: components["schemas"]["Provenance"];
         };
+        /** @description Matriz mês×ano de proventos creditados (RF12/BR-234). Ausência ≠ R$ 0. Não é previsão (RF13 separado). Campo legado `year` omitido quando multi-ano. */
         DividendSeasonality: {
-            year: number;
+            /** Format: date */
+            historyFrom?: string | null;
+            yearsCovered: number[];
+            coverageNote: string;
+            /** @description Recebido (CREDITED) apenas */
             cells: {
+                /** Format: uuid */
+                assetId: string;
                 ticker: string;
+                assetClass?: components["schemas"]["AssetClass"];
                 month: number;
+                year: number;
                 amountNet: components["schemas"]["Decimal"];
             }[];
+            /** @description Anunciado/previsto segregado; não entra nos totais de recebido */
+            announcedCells: {
+                /** Format: uuid */
+                assetId: string;
+                ticker: string;
+                assetClass?: components["schemas"]["AssetClass"];
+                month: number;
+                year: number;
+                amountNet: components["schemas"]["Decimal"];
+            }[];
+            monthlyTotals: {
+                month: number;
+                /** @description Presente quando o total é por mês-ano; omitido se agregado só por mês */
+                year?: number;
+                amountNet: components["schemas"]["Decimal"];
+            }[];
+            yearlyTotals: {
+                year: number;
+                amountNet: components["schemas"]["Decimal"];
+            }[];
+            /**
+             * @deprecated
+             * @description Legado stub ano único; preferir yearsCovered
+             */
+            year?: number;
         };
         DividendProjection: {
             /** @description Expectativa anunciada — não retorno garantido (BR-103) */
@@ -2928,17 +3046,28 @@ export interface components {
         /** @enum {string} */
         ValuationMethod: "BAZIN" | "GRAHAM_CLASSIC" | "GRAHAM_ETTJ" | "GORDON" | "SECTOR_MULTIPLES" | "EARNINGS_YIELD";
         CeilingPriceRequest: {
-            ticker: string;
+            /** @description Ticker real; omitir se scenario=true com inputs controlados */
+            ticker?: string;
+            /** @description true = entradas controladas; resultado SCENARIO_ONLY ≠ homologação */
+            scenario?: boolean;
+            /** @description Entradas controladas (LPA, VPA, D0, g, k, …) quando scenario=true */
+            inputs?: {
+                [key: string]: unknown;
+            };
             methods: components["schemas"]["ValuationMethod"][];
             /** @description Fração 0-1 (padrão 0.20) */
             safetyMargin: components["schemas"]["Decimal"];
         };
         CeilingPriceResponse: {
-            ticker: string;
+            ticker?: string | null;
+            /** @enum {string} */
+            mode?: "SCENARIO_ONLY" | "ASSET_LIVE";
+            disclaimer: string;
             results: {
                 method: components["schemas"]["ValuationMethod"];
                 /** @enum {string} */
-                status: "OK" | "INAPPLICABLE";
+                status: "OK" | "INAPPLICABLE" | "UNAVAILABLE" | "NOT_APPLICABLE";
+                detailCode?: string | null;
                 ceiling?: components["schemas"]["Decimal"];
                 provenance?: components["schemas"]["Provenance"];
             }[];
@@ -3143,11 +3272,72 @@ export interface components {
             targetEquityPct?: components["schemas"]["Decimal"];
         };
         AllocationSuggestionResponse: {
+            /** @description TARGETS_REQUIRED quando metas ausentes */
+            code?: string;
             suggestions: {
                 ticker: string;
                 amount: components["schemas"]["Decimal"];
                 rationale: string;
             }[];
+        };
+        AllocationTargetsPut: {
+            /** @description Frações 0–1 por classe (EQUITY, FII, FIXED_INCOME, CASH, …); soma=1 */
+            classTargets: {
+                [key: string]: components["schemas"]["Decimal"];
+            };
+            /** @description Frações opcionais por ticker (⊆ classe) */
+            assetTargets?: {
+                [key: string]: components["schemas"]["Decimal"];
+            };
+            bands?: {
+                [key: string]: {
+                    lo?: components["schemas"]["Decimal"];
+                    hi?: components["schemas"]["Decimal"];
+                };
+            };
+            /**
+             * @default MINIMIZE_CLASS_GAP_L1_NO_SELL
+             * @enum {string}
+             */
+            objective: "MINIMIZE_CLASS_GAP_L1_NO_SELL";
+        };
+        AllocationTargets: components["schemas"]["AllocationTargetsPut"] & {
+            /** @enum {string} */
+            unit: "FRACTION_0_1";
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AllocationSimulateRequest: {
+            amount: components["schemas"]["Decimal"];
+            /** Format: date */
+            asOf?: string;
+            /** @description Override opcional; senão usa metas persistidas */
+            classTargets?: {
+                [key: string]: components["schemas"]["Decimal"];
+            };
+        };
+        AllocationSimulateResponse: {
+            objective: string;
+            /** @enum {string} */
+            unit: "FRACTION_0_1";
+            /** @description Sempre false */
+            mutatesPortfolio: boolean;
+            code?: string | null;
+            residualCash?: components["schemas"]["Decimal"];
+            unpricedResidual?: components["schemas"]["Decimal"];
+            allocations: {
+                ticker: string;
+                class: string;
+                amount: components["schemas"]["Decimal"];
+                priceRef?: components["schemas"]["Decimal"];
+                priceSource?: string | null;
+            }[];
+            excluded?: {
+                ticker: string;
+                reason: string;
+            }[];
+            assumptions: string[];
+            limitations: string[];
         };
         WatchlistItem: {
             ticker: string;
@@ -3210,7 +3400,22 @@ export interface components {
             dividendYield?: components["schemas"]["Decimal"];
         };
         FiiHealthScore: {
+            /** @description Travas estruturais BR-038 (exclui alerta de concentração parametrizado) */
             passed: boolean;
+            /** @description Alerta parametrizado. threshold é fração 0–1 (default 0.2 = 20%, Blueprint §3.3); não é regra universal. unit sempre FRACTION_0_1. */
+            concentrationAlert?: {
+                /** @description Fração 0–1 (0.2 ≡ 20%) */
+                threshold?: number;
+                /** @enum {string} */
+                unit?: "FRACTION_0_1";
+                source?: string;
+                triggered?: boolean;
+                unavailable?: boolean;
+                /** @enum {string} */
+                applicability?: "OK" | "NOT_APPLICABLE" | "SEGMENT_UNKNOWN" | "APPLICABLE_MISSING" | "STALE";
+            };
+            /** @enum {string|null} */
+            segmentKind?: "BRICK" | "PAPER" | "HYBRID" | "UNKNOWN" | null;
             gates: {
                 id: string;
                 label: string;
@@ -3273,6 +3478,20 @@ export interface components {
             };
             volatilityAnnualizedPercent?: components["schemas"]["Decimal"];
             maxDrawdownPercent?: components["schemas"]["Decimal"];
+            /** @description MDD temporal (BR-231). Índices em sessões da série de retornos; recovered=false se ainda underwater. Não usa dias corridos. */
+            maxDrawdownEpisode?: {
+                maxDrawdownPercent?: components["schemas"]["Decimal"];
+                peakIndex?: number;
+                troughIndex?: number;
+                recoveryIndex?: number | null;
+                recovered?: boolean;
+                sessionsToTrough?: number;
+                sessionsToRecovery?: number | null;
+                sessionsUnderwater?: number;
+                /** @enum {string} */
+                calendarBasis?: "SESSIONS";
+                note?: string;
+            } | null;
             correlation?: {
                 /** @enum {string} */
                 status?: "OK" | "INSUFFICIENT_HISTORY" | "BLOCKED";
@@ -3494,10 +3713,27 @@ export interface components {
             observationsUpserted?: number;
             observationsRevised?: number;
             errorCode?: string | null;
-            /** @description fetched, unchanged, lastObservationDate, durationMs. Sem secret. */
+            /** @description fetched, unchanged, lastObservationDate, durationMs, phase, attempt, sourceLag, coverageNote, consumersReprocessed. Sem secret. */
             metrics?: {
                 [key: string]: unknown;
             };
+        };
+        SeriesOrchestrationView: {
+            /** @description true só se SERIES_INGEST_ENABLED=1 (corte default false) */
+            productionCronEnabled: boolean;
+            slotRoles: {
+                /** @description HH:MM */
+                slot: string;
+                /** @enum {string} */
+                role: "INTRADAY_OBSERVE" | "TREASURY_PU_MORNING" | "SESSION_CLOSE" | "CUSTOM";
+            }[];
+            capabilities: {
+                capability: string;
+                phases: ("COLLECT" | "VALIDATE_NORMALIZE" | "PUBLISH" | "REPROCESS_CONSUMERS" | "NOTIFY")[];
+                consumers: string[];
+                /** @description Capacidades que não bloqueiam esta */
+                independentOf?: string[];
+            }[];
         };
         AdminFeatureRoutingView: {
             /** @description Inclui SERIES_CDI, SERIES_IPCA, SERIES_SELIC, SERIES_TREASURY_PU, SERIES_ETTJ, SERIES_IPCA_PROJ, SERIES_LISTED_CLOSE. */
@@ -4319,6 +4555,8 @@ export interface operations {
                     cutDate?: string;
                     /** @description Não autoriza merge. Histórico com tradeDate <= cutDate no mesmo ativo responde 422 CONFLICT_EMBEDDED_HISTORY (manter snapshot XOR reconstruir pelo histórico). True não soma nem substitui. */
                     confirmEmbeddedHistory?: string;
+                    /** @description Nome da folha XLSX (default = primeira). Ignorado em CSV/Sinacor. */
+                    sheetName?: string;
                     /** Format: binary */
                     file: string;
                 };
@@ -4610,7 +4848,10 @@ export interface operations {
     };
     getDividendSeasonality: {
         parameters: {
-            query?: never;
+            query?: {
+                fromYear?: number;
+                toYear?: number;
+            };
             header?: never;
             path: {
                 portfolioId: components["parameters"]["PortfolioId"];
@@ -5532,6 +5773,84 @@ export interface operations {
             };
         };
     };
+    getAllocationTargets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                portfolioId: components["parameters"]["PortfolioId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllocationTargets"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    putAllocationTargets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                portfolioId: components["parameters"]["PortfolioId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AllocationTargetsPut"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllocationTargets"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    simulateAllocationContribution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                portfolioId: components["parameters"]["PortfolioId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AllocationSimulateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllocationSimulateResponse"];
+                };
+            };
+            422: components["responses"]["ValidationError"];
+        };
+    };
     suggestAllocation: {
         parameters: {
             query?: never;
@@ -5556,6 +5875,7 @@ export interface operations {
                     "application/json": components["schemas"]["AllocationSuggestionResponse"];
                 };
             };
+            422: components["responses"]["ValidationError"];
         };
     };
     listWatchlist: {
@@ -6046,6 +6366,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminFeatureRoutingView"][];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getAdminSeriesOrchestration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesOrchestrationView"];
                 };
             };
             403: components["responses"]["Forbidden"];

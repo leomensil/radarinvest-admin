@@ -85,7 +85,10 @@ test.describe("Admin focused journeys", () => {
     await expect(page.getByTestId("admin-capabilities")).toBeVisible();
   });
 
-  test("2. SA: jobs page shows real runs table", async ({ page, request }) => {
+  test("2. SA: jobs page shows real runs table + orchestration", async ({
+    page,
+    request,
+  }) => {
     test.skip(!process.env.ADMIN_SA_EMAIL, "ADMIN_SA_EMAIL required");
     const email = process.env.ADMIN_SA_EMAIL!;
     const password = process.env.ADMIN_SA_PASSWORD ?? "test-password-123";
@@ -93,9 +96,19 @@ test.describe("Admin focused journeys", () => {
       data: { email, password },
     });
     const { accessToken } = await login.json();
+    const orch = await request.get(`${apiBase}/admin/series-ingest/orchestration`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    expect(orch.ok()).toBeTruthy();
+    const body = await orch.json();
+    expect(body.productionCronEnabled).toBe(false);
+    expect(body.slotRoles?.length).toBeGreaterThanOrEqual(3);
+
     await injectAdminSession(page, accessToken);
     await page.getByRole("link", { name: "Jobs" }).click();
     await expect(page.getByTestId("admin-jobs")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("admin-orchestration")).toBeVisible();
+    await expect(page.getByText(/TREASURY_PU_MORNING|SESSION_CLOSE/)).toBeVisible();
   });
 
   test("4. SA: AI prep page never shows credential plaintext", async ({ page, request }) => {

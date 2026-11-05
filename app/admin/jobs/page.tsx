@@ -22,18 +22,34 @@ type Run = {
   observationsUpserted?: number | null;
   observationsRevised?: number | null;
   errorCode?: string | null;
+  metrics?: Record<string, unknown> | null;
+};
+
+type Orch = {
+  productionCronEnabled: boolean;
+  slotRoles: { slot: string; role: string }[];
+  capabilities: {
+    capability: string;
+    phases: string[];
+    consumers: string[];
+  }[];
 };
 
 export default function JobsPage() {
   const [rows, setRows] = useState<Run[]>([]);
+  const [orch, setOrch] = useState<Orch | null>(null);
   const [cap, setCap] = useState<string>("");
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const q = cap ? `?capability=${encodeURIComponent(cap)}` : "";
-    const data = await adminFetch<Run[]>(`/admin/series-ingest/runs${q}`);
+    const [data, graph] = await Promise.all([
+      adminFetch<Run[]>(`/admin/series-ingest/runs${q}`),
+      adminFetch<Orch>("/admin/series-ingest/orchestration"),
+    ]);
     setRows(data);
+    setOrch(graph);
   }, [cap]);
 
   useEffect(() => {
@@ -69,8 +85,32 @@ export default function JobsPage() {
       <h1 className="mb-2 text-2xl font-semibold">Jobs de ingestão</h1>
       <p className="mb-4 text-sm text-muted">
         Histórico durable `series_ingest_runs`. Token/licença/fonte indisponível ≠ falha de cálculo.
-        Cron produção: OFF.
+        Cron produção: {orch?.productionCronEnabled ? "ON" : "OFF"}.
+        PU Venda Manhã ≠ fechamento de sessão.
       </p>
+      {orch ? (
+        <div
+          className="mb-4 rounded border border-border bg-surface p-3 text-xs"
+          data-testid="admin-orchestration"
+        >
+          <p className="mb-2 font-medium">Orquestração (Inc.5)</p>
+          <p className="mb-1">
+            Slots:{" "}
+            {orch.slotRoles.map((s) => `${s.slot}=${s.role}`).join(" · ")}
+          </p>
+          <ul className="list-inside list-disc text-muted">
+            {orch.capabilities.slice(0, 4).map((c) => (
+              <li key={c.capability}>
+                {c.capability}: {c.phases.join("→")} · consumidores{" "}
+                {c.consumers.join(", ")}
+              </li>
+            ))}
+            {orch.capabilities.length > 4 ? (
+              <li>+{orch.capabilities.length - 4} capacidades…</li>
+            ) : null}
+          </ul>
+        </div>
+      ) : null}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <select
           className="rounded border border-border px-2 py-1 text-sm"
