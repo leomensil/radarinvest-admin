@@ -2415,6 +2415,16 @@ export interface components {
             amountNet: components["schemas"]["Decimal"];
             /** @default false */
             nonRecurring: boolean;
+            /** @description Chave estável provedor (idempotência). Evento público ≠ recibo pessoal. */
+            sourceEventKey?: string;
+            /**
+             * @description Não inferir retenção universal se UNKNOWN.
+             * @enum {string}
+             */
+            amountBasis?: "GROSS_DECLARED" | "NET_DECLARED" | "UNKNOWN";
+            sourceSlug?: string;
+            /** Format: date-time */
+            collectedAt?: string;
             /** @description Rateio por IF na data-com (BR-048) */
             custodians?: components["schemas"]["DividendCustodianShare"][];
         };
@@ -3694,16 +3704,16 @@ export interface components {
         };
         SeriesIngestTriggerRequest: {
             /**
-             * @description CDI=SGS 4389; IPCA=IBGE NI; SELIC=SGS 11; TREASURY_PU=PU Venda Manhã; ETTJ=ANBIMA NSS CSV; IPCA_PROJ=ANBIMA indicadores.xls % a.m.; LISTED_CLOSE=brapi OHLCV close (unadjusted) por assetId.
+             * @description CDI=SGS 4389; IPCA=IBGE NI; SELIC=SGS 11; TREASURY_PU=PU Venda Manhã; ETTJ=ANBIMA NSS CSV; IPCA_PROJ=ANBIMA indicadores.xls % a.m.; LISTED_CLOSE=brapi OHLCV close (unadjusted) por assetId. DIVIDENDS=proventos públicos (≠ receipts). FUNDAMENTALS=métricas EQ/FII/ETF com provenance.
              * @enum {string}
              */
-            capability: "CDI" | "IPCA" | "SELIC" | "TREASURY_PU" | "ETTJ" | "IPCA_PROJ" | "LISTED_CLOSE";
+            capability: "CDI" | "IPCA" | "SELIC" | "TREASURY_PU" | "ETTJ" | "IPCA_PROJ" | "LISTED_CLOSE" | "DIVIDENDS" | "FUNDAMENTALS";
         };
         SeriesIngestRunView: {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            capability: "CDI" | "IPCA" | "SELIC" | "TREASURY_PU" | "ETTJ" | "IPCA_PROJ" | "LISTED_CLOSE";
+            capability: "CDI" | "IPCA" | "SELIC" | "TREASURY_PU" | "ETTJ" | "IPCA_PROJ" | "LISTED_CLOSE" | "DIVIDENDS" | "FUNDAMENTALS";
             /** @enum {string} */
             status: "RUNNING" | "SUCCEEDED" | "FAILED" | "SKIPPED";
             /** Format: date-time */
@@ -3736,7 +3746,7 @@ export interface components {
             }[];
         };
         AdminFeatureRoutingView: {
-            /** @description Inclui SERIES_CDI, SERIES_IPCA, SERIES_SELIC, SERIES_TREASURY_PU, SERIES_ETTJ, SERIES_IPCA_PROJ, SERIES_LISTED_CLOSE. */
+            /** @description Inclui SERIES_CDI, SERIES_IPCA, SERIES_SELIC, SERIES_TREASURY_PU, SERIES_ETTJ, SERIES_IPCA_PROJ, SERIES_LISTED_CLOSE, SERIES_DIVIDENDS, SERIES_FUNDAMENTALS. */
             featureKey: string;
             label?: string;
             isActive: boolean;
@@ -6395,7 +6405,7 @@ export interface operations {
     listAdminSeriesIngestRuns: {
         parameters: {
             query?: {
-                capability?: "CDI" | "IPCA" | "SELIC" | "TREASURY_PU" | "ETTJ" | "IPCA_PROJ" | "LISTED_CLOSE";
+                capability?: "CDI" | "IPCA" | "SELIC" | "TREASURY_PU" | "ETTJ" | "IPCA_PROJ" | "LISTED_CLOSE" | "DIVIDENDS" | "FUNDAMENTALS";
             };
             header?: never;
             path?: never;

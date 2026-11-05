@@ -1,6 +1,6 @@
 {
   "name": "@leomensil/radarinvest-contracts",
-  "version": "0.8.38",
+  "version": "0.8.39",
   "description": "RadarInvest OpenAPI-derived TypeScript types and Zod schemas",
   "license": "UNLICENSED",
   "repository": {

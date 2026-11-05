@@ -126,8 +126,10 @@ export declare const schemas: {
   TreasuryBondHistory: z.ZodTypeAny;
   TreasuryHistoryResponse: z.ZodTypeAny;
   TreasuryDurationView: z.ZodTypeAny;
-  AllocationSuggestionRequest: z.ZodTypeAny;
-  AllocationSuggestionResponse: z.ZodTypeAny;
+  AllocationTargetsPut: z.ZodTypeAny;
+  AllocationTargets: z.ZodTypeAny;
+  AllocationSimulateRequest: z.ZodTypeAny;
+  AllocationSimulateResponse: z.ZodTypeAny;
   WatchlistItem: z.ZodTypeAny;
   MarketClosesIngestRequest: z.ZodTypeAny;
   PrivacyEraseResponse: z.ZodTypeAny;
@@ -149,6 +151,7 @@ export declare const schemas: {
   AdminConnectionTestResult: z.ZodTypeAny;
   AdminFeatureRoutingView: z.ZodTypeAny;
   AdminFeatureRoutingUpdate: z.ZodTypeAny;
+  SeriesOrchestrationView: z.ZodTypeAny;
   SeriesIngestRunView: z.ZodTypeAny;
   SeriesIngestTriggerRequest: z.ZodTypeAny;
   AdminUserView: z.ZodTypeAny;
@@ -156,4 +159,6 @@ export declare const schemas: {
   AdminSubscriptionView: z.ZodTypeAny;
   AdminSubscriptionPatch: z.ZodTypeAny;
   AdminObservabilitySnapshot: z.ZodTypeAny;
+  AllocationSuggestionRequest: z.ZodTypeAny;
+  AllocationSuggestionResponse: z.ZodTypeAny;
 };

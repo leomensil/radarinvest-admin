@@ -851,6 +851,12 @@ const DividendView = z
     amountGross: Decimal,
     amountNet: Decimal,
     nonRecurring: z.boolean().optional().default(false),
+    sourceEventKey: z.string().optional(),
+    amountBasis: z
+      .enum(["GROSS_DECLARED", "NET_DECLARED", "UNKNOWN"])
+      .optional(),
+    sourceSlug: z.string().optional(),
+    collectedAt: z.string().datetime({ offset: true }).optional(),
     custodians: z.array(DividendCustodianShare).optional(),
   })
   .passthrough();
@@ -2147,6 +2153,8 @@ const SeriesIngestRunView = z
       "ETTJ",
       "IPCA_PROJ",
       "LISTED_CLOSE",
+      "DIVIDENDS",
+      "FUNDAMENTALS",
     ]),
     status: z.enum(["RUNNING", "SUCCEEDED", "FAILED", "SKIPPED"]),
     startedAt: z.string().datetime({ offset: true }),
@@ -2168,6 +2176,8 @@ const SeriesIngestTriggerRequest = z
       "ETTJ",
       "IPCA_PROJ",
       "LISTED_CLOSE",
+      "DIVIDENDS",
+      "FUNDAMENTALS",
     ]),
   })
   .passthrough();

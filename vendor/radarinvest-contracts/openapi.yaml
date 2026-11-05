@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: RadarInvest API
-  version: 0.8.38
+  version: 0.8.39
   description: >
     Contrato canônico Core (MVP). Implementado por radarinvest-api.
     Decimal monetário como string. Provenance obrigatória em métricas (BR-010).
@@ -2199,7 +2199,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [CDI, IPCA, SELIC, TREASURY_PU, ETTJ, IPCA_PROJ, LISTED_CLOSE]
+            enum: [CDI, IPCA, SELIC, TREASURY_PU, ETTJ, IPCA_PROJ, LISTED_CLOSE, DIVIDENDS, FUNDAMENTALS]
       responses:
         "200":
           description: OK
@@ -3750,6 +3750,18 @@ components:
         nonRecurring:
           type: boolean
           default: false
+        sourceEventKey:
+          type: string
+          description: Chave estável provedor (idempotência). Evento público ≠ recibo pessoal.
+        amountBasis:
+          type: string
+          enum: [GROSS_DECLARED, NET_DECLARED, UNKNOWN]
+          description: Não inferir retenção universal se UNKNOWN.
+        sourceSlug:
+          type: string
+        collectedAt:
+          type: string
+          format: date-time
         custodians:
           type: array
           description: Rateio por IF na data-com (BR-048)
@@ -6355,11 +6367,11 @@ components:
       properties:
         capability:
           type: string
-          enum: [CDI, IPCA, SELIC, TREASURY_PU, ETTJ, IPCA_PROJ, LISTED_CLOSE]
+          enum: [CDI, IPCA, SELIC, TREASURY_PU, ETTJ, IPCA_PROJ, LISTED_CLOSE, DIVIDENDS, FUNDAMENTALS]
           description: >
             CDI=SGS 4389; IPCA=IBGE NI; SELIC=SGS 11; TREASURY_PU=PU Venda Manhã;
             ETTJ=ANBIMA NSS CSV; IPCA_PROJ=ANBIMA indicadores.xls % a.m.;
-            LISTED_CLOSE=brapi OHLCV close (unadjusted) por assetId.
+            LISTED_CLOSE=brapi OHLCV close (unadjusted) por assetId. DIVIDENDS=proventos públicos (≠ receipts). FUNDAMENTALS=métricas EQ/FII/ETF com provenance.
     SeriesIngestRunView:
       type: object
       required: [id, capability, status, startedAt]
@@ -6369,7 +6381,7 @@ components:
           format: uuid
         capability:
           type: string
-          enum: [CDI, IPCA, SELIC, TREASURY_PU, ETTJ, IPCA_PROJ, LISTED_CLOSE]
+          enum: [CDI, IPCA, SELIC, TREASURY_PU, ETTJ, IPCA_PROJ, LISTED_CLOSE, DIVIDENDS, FUNDAMENTALS]
         status:
           type: string
           enum: [RUNNING, SUCCEEDED, FAILED, SKIPPED]
@@ -6440,7 +6452,7 @@ components:
       properties:
         featureKey:
           type: string
-          description: Inclui SERIES_CDI, SERIES_IPCA, SERIES_SELIC, SERIES_TREASURY_PU, SERIES_ETTJ, SERIES_IPCA_PROJ, SERIES_LISTED_CLOSE.
+          description: Inclui SERIES_CDI, SERIES_IPCA, SERIES_SELIC, SERIES_TREASURY_PU, SERIES_ETTJ, SERIES_IPCA_PROJ, SERIES_LISTED_CLOSE, SERIES_DIVIDENDS, SERIES_FUNDAMENTALS.
         label:
           type: string
         isActive:
