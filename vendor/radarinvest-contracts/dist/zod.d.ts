@@ -70,6 +70,7 @@ export declare const schemas: {
   DividendView: z.ZodTypeAny;
   DividendReceipt: z.ZodTypeAny;
   YieldOnCost: z.ZodTypeAny;
+  YieldOnCostSummary: z.ZodTypeAny;
   DividendSeasonality: z.ZodTypeAny;
   DividendProjection: z.ZodTypeAny;
   EttjCurveKind: z.ZodTypeAny;
@@ -126,6 +127,9 @@ export declare const schemas: {
   TreasuryBondHistory: z.ZodTypeAny;
   TreasuryHistoryResponse: z.ZodTypeAny;
   TreasuryDurationView: z.ZodTypeAny;
+  TreasuryDurationGroup: z.ZodTypeAny;
+  TreasuryDurationCoverage: z.ZodTypeAny;
+  TreasuryDurationSummaryResponse: z.ZodTypeAny;
   AllocationTargetsPut: z.ZodTypeAny;
   AllocationTargets: z.ZodTypeAny;
   AllocationSimulateRequest: z.ZodTypeAny;

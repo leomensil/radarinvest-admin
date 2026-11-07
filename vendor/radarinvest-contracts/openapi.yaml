@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: RadarInvest API
-  version: 0.8.39
+  version: 0.8.42
   description: >
     Contrato canônico Core (MVP). Implementado por radarinvest-api.
     Decimal monetário como string. Provenance obrigatória em métricas (BR-010).
@@ -858,6 +858,28 @@ paths:
                 items:
                   $ref: "#/components/schemas/YieldOnCost"
 
+  /portfolios/{portfolioId}/yoc/summary:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [dividends]
+      operationId: getYieldOnCostSummary
+      summary: Resumo consolidado ponderado de YoC da carteira (IND-EQ-YOC / BR-227)
+      parameters:
+        - name: asOf
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Resumo de YoC ponderado da carteira
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/YieldOnCostSummary"
+
   /portfolios/{portfolioId}/dividends/seasonality:
     parameters:
       - $ref: "#/components/parameters/PortfolioId"
@@ -1673,6 +1695,21 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/TreasuryDurationView"
+
+  /portfolios/{portfolioId}/treasury/duration/summary:
+    parameters:
+      - $ref: "#/components/parameters/PortfolioId"
+    get:
+      tags: [treasury]
+      operationId: getTreasuryDurationSummary
+      summary: Resumo consolidado por grupo homogêneo de risco Tesouro (RF27 / IND-TD-DURATION)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryDurationSummaryResponse"
 
   /portfolios/{portfolioId}/allocation/targets:
     parameters:
@@ -3814,6 +3851,66 @@ components:
           $ref: "#/components/schemas/Decimal"
         provenance:
           $ref: "#/components/schemas/Provenance"
+        status:
+          type: string
+          enum: [OK, COST_UNKNOWN, NO_DIVIDENDS_PAID, NOT_APPLICABLE]
+        incomeNet12m:
+          $ref: "#/components/schemas/Decimal"
+        costBasis:
+          $ref: "#/components/schemas/Decimal"
+        asOf:
+          type: string
+          format: date
+        windowDays:
+          type: integer
+    YieldOnCostSummary:
+      type: object
+      required:
+        - asOf
+        - windowStart
+        - windowDays
+        - totalIncome12mEligible
+        - totalCostEligible
+        - coverage
+        - items
+      properties:
+        asOf:
+          type: string
+          format: date
+        windowStart:
+          type: string
+          format: date
+        windowDays:
+          type: integer
+        yocWeightedPercent:
+          $ref: "#/components/schemas/Decimal"
+        totalIncome12mEligible:
+          $ref: "#/components/schemas/Decimal"
+        totalCostEligible:
+          $ref: "#/components/schemas/Decimal"
+        coverage:
+          type: object
+          required:
+            - coveredPositionsCount
+            - totalPositionsCount
+            - costCoveredAmount
+            - totalCostAmount
+            - isFullyCovered
+          properties:
+            coveredPositionsCount:
+              type: integer
+            totalPositionsCount:
+              type: integer
+            costCoveredAmount:
+              $ref: "#/components/schemas/Decimal"
+            totalCostAmount:
+              $ref: "#/components/schemas/Decimal"
+            isFullyCovered:
+              type: boolean
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/YieldOnCost"
     DividendSeasonality:
       type: object
       required:
@@ -5494,19 +5591,105 @@ components:
           nullable: true
     TreasuryDurationView:
       type: object
-      required: [id, title, macaulayYears, modifiedDuration, dv01]
+      required: [id, title, status]
       properties:
         id:
           type: string
           format: uuid
         title:
           type: string
+        bondType:
+          type: string
+        species:
+          type: string
+        status:
+          type: string
+          enum: [OK, UNSUPPORTED, PU_MISSING, SETTLED, ZERO_QUANTITY, MATURED]
+        reason:
+          type: string
+          nullable: true
+        riskGroup:
+          type: string
+          enum: [PREFIXED, INFLATION_REAL, OTHER]
+        marketValue:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        quantity:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
         macaulayYears:
           $ref: "#/components/schemas/Decimal"
+          nullable: true
         modifiedDuration:
           $ref: "#/components/schemas/Decimal"
+          nullable: true
         dv01:
           $ref: "#/components/schemas/Decimal"
+          nullable: true
+    TreasuryDurationGroup:
+      type: object
+      required: [group, marketValueTotal, titlesCount]
+      properties:
+        group:
+          type: string
+          enum: [PREFIXED, INFLATION_REAL, OTHER]
+        marketValueTotal:
+          $ref: "#/components/schemas/Decimal"
+        weightedModifiedDuration:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        weightedMacaulayYears:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        totalDv01:
+          $ref: "#/components/schemas/Decimal"
+        titlesCount:
+          type: integer
+    TreasuryDurationCoverage:
+      type: object
+      required:
+        - valuedPortfolioMarketValue
+        - prefixedCoveredMarketValue
+        - inflationRealCoveredMarketValue
+        - unsupportedMarketValue
+        - unpricedLotsCount
+        - unpricedLotsQuantity
+        - isPortfolioValuationComplete
+        - note
+      properties:
+        valuedPortfolioMarketValue:
+          $ref: "#/components/schemas/Decimal"
+        prefixedCoveredMarketValue:
+          $ref: "#/components/schemas/Decimal"
+        inflationRealCoveredMarketValue:
+          $ref: "#/components/schemas/Decimal"
+        unsupportedMarketValue:
+          $ref: "#/components/schemas/Decimal"
+        unpricedLotsCount:
+          type: integer
+        unpricedLotsQuantity:
+          $ref: "#/components/schemas/Decimal"
+        isPortfolioValuationComplete:
+          type: boolean
+        coveragePercent:
+          $ref: "#/components/schemas/Decimal"
+          nullable: true
+        note:
+          type: string
+    TreasuryDurationSummaryResponse:
+      type: object
+      required: [groups, coverage, items]
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/TreasuryDurationGroup"
+        coverage:
+          $ref: "#/components/schemas/TreasuryDurationCoverage"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TreasuryDurationView"
     AllocationSuggestionRequest:
       type: object
       required: [amount]
@@ -5759,11 +5942,33 @@ components:
           $ref: "#/components/schemas/Decimal"
     FiiHealthScore:
       type: object
-      required: [passed, gates]
+      required: [gates]
       properties:
+        modelName:
+          type: string
+        modelVersion:
+          type: string
+        disclaimer:
+          type: string
         passed:
           type: boolean
-          description: Travas estruturais BR-038 (exclui alerta de concentração parametrizado)
+          nullable: true
+          description: Travas estruturais heurísticas. null quando dados incompletos ou composição híbrida indeterminada.
+        overallStatus:
+          type: string
+          enum: [ALL_APPLICABLE_PASSED, SOME_GATES_FAILED, INCOMPLETE_DATA, PARTIAL_EVALUATION_PAPER_SEGMENT, INDETERMINATE_HYBRID_COMPOSITION]
+        evaluationCoverage:
+          type: object
+          required: [applicableGatesCount, observedGatesCount, passedGatesCount, isComplete]
+          properties:
+            applicableGatesCount:
+              type: integer
+            observedGatesCount:
+              type: integer
+            passedGatesCount:
+              type: integer
+            isComplete:
+              type: boolean
         concentrationAlert:
           type: object
           description: >
@@ -5786,7 +5991,7 @@ components:
               type: boolean
             applicability:
               type: string
-              enum: [OK, NOT_APPLICABLE, SEGMENT_UNKNOWN, APPLICABLE_MISSING, STALE]
+              enum: [OK, NOT_APPLICABLE, SEGMENT_UNKNOWN, APPLICABLE_MISSING, INDETERMINATE_COMPOSITION, STALE]
         segmentKind:
           type: string
           enum: [BRICK, PAPER, HYBRID, UNKNOWN]
@@ -5795,14 +6000,23 @@ components:
           type: array
           items:
             type: object
-            required: [id, label, passed, observed, threshold]
+            required: [id, label, threshold]
             properties:
               id:
                 type: string
               label:
                 type: string
+              criterionRationale:
+                type: string
+              applicability:
+                type: string
+                enum: [APPLICABLE, NOT_APPLICABLE_SEGMENT, INDETERMINATE_COMPOSITION]
+              status:
+                type: string
+                enum: [PASSED, FAILED, UNAVAILABLE, NOT_APPLICABLE, INDETERMINATE]
               passed:
                 type: boolean
+                nullable: true
               observed:
                 $ref: "#/components/schemas/Decimal"
                 nullable: true

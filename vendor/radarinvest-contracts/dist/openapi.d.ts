@@ -651,6 +651,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/portfolios/{portfolioId}/yoc/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                portfolioId: components["parameters"]["PortfolioId"];
+            };
+            cookie?: never;
+        };
+        /** Resumo consolidado ponderado de YoC da carteira (IND-EQ-YOC / BR-227) */
+        get: operations["getYieldOnCostSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/portfolios/{portfolioId}/dividends/seasonality": {
         parameters: {
             query?: never;
@@ -1233,6 +1252,25 @@ export interface paths {
         };
         /** Duration / sensibilidade de posições Tesouro (RF27) */
         get: operations["listTreasuryDuration"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/portfolios/{portfolioId}/treasury/duration/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                portfolioId: components["parameters"]["PortfolioId"];
+            };
+            cookie?: never;
+        };
+        /** Resumo consolidado por grupo homogêneo de risco Tesouro (RF27 / IND-TD-DURATION) */
+        get: operations["getTreasuryDurationSummary"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2451,6 +2489,31 @@ export interface components {
             ticker: string;
             yocPercent: components["schemas"]["Decimal"];
             provenance: components["schemas"]["Provenance"];
+            /** @enum {string} */
+            status?: "OK" | "COST_UNKNOWN" | "NO_DIVIDENDS_PAID" | "NOT_APPLICABLE";
+            incomeNet12m?: components["schemas"]["Decimal"];
+            costBasis?: components["schemas"]["Decimal"];
+            /** Format: date */
+            asOf?: string;
+            windowDays?: number;
+        };
+        YieldOnCostSummary: {
+            /** Format: date */
+            asOf: string;
+            /** Format: date */
+            windowStart: string;
+            windowDays: number;
+            yocWeightedPercent?: components["schemas"]["Decimal"];
+            totalIncome12mEligible: components["schemas"]["Decimal"];
+            totalCostEligible: components["schemas"]["Decimal"];
+            coverage: {
+                coveredPositionsCount: number;
+                totalPositionsCount: number;
+                costCoveredAmount: components["schemas"]["Decimal"];
+                totalCostAmount: components["schemas"]["Decimal"];
+                isFullyCovered: boolean;
+            };
+            items: components["schemas"]["YieldOnCost"][];
         };
         /** @description Matriz mês×ano de proventos creditados (RF12/BR-234). Ausência ≠ R$ 0. Não é previsão (RF13 separado). Campo legado `year` omitido quando multi-ano. */
         DividendSeasonality: {
@@ -3272,9 +3335,43 @@ export interface components {
             /** Format: uuid */
             id: string;
             title: string;
-            macaulayYears: components["schemas"]["Decimal"];
-            modifiedDuration: components["schemas"]["Decimal"];
-            dv01: components["schemas"]["Decimal"];
+            bondType?: string;
+            species?: string;
+            /** @enum {string} */
+            status: "OK" | "UNSUPPORTED" | "PU_MISSING" | "SETTLED" | "ZERO_QUANTITY" | "MATURED";
+            reason?: string | null;
+            /** @enum {string} */
+            riskGroup?: "PREFIXED" | "INFLATION_REAL" | "OTHER";
+            marketValue?: components["schemas"]["Decimal"];
+            quantity?: components["schemas"]["Decimal"];
+            macaulayYears?: components["schemas"]["Decimal"];
+            modifiedDuration?: components["schemas"]["Decimal"];
+            dv01?: components["schemas"]["Decimal"];
+        };
+        TreasuryDurationGroup: {
+            /** @enum {string} */
+            group: "PREFIXED" | "INFLATION_REAL" | "OTHER";
+            marketValueTotal: components["schemas"]["Decimal"];
+            weightedModifiedDuration?: components["schemas"]["Decimal"];
+            weightedMacaulayYears?: components["schemas"]["Decimal"];
+            totalDv01?: components["schemas"]["Decimal"];
+            titlesCount: number;
+        };
+        TreasuryDurationCoverage: {
+            valuedPortfolioMarketValue: components["schemas"]["Decimal"];
+            prefixedCoveredMarketValue: components["schemas"]["Decimal"];
+            inflationRealCoveredMarketValue: components["schemas"]["Decimal"];
+            unsupportedMarketValue: components["schemas"]["Decimal"];
+            unpricedLotsCount: number;
+            unpricedLotsQuantity: components["schemas"]["Decimal"];
+            isPortfolioValuationComplete: boolean;
+            coveragePercent?: components["schemas"]["Decimal"];
+            note: string;
+        };
+        TreasuryDurationSummaryResponse: {
+            groups: components["schemas"]["TreasuryDurationGroup"][];
+            coverage: components["schemas"]["TreasuryDurationCoverage"];
+            items: components["schemas"]["TreasuryDurationView"][];
         };
         AllocationSuggestionRequest: {
             amount: components["schemas"]["Decimal"];
@@ -3410,8 +3507,19 @@ export interface components {
             dividendYield?: components["schemas"]["Decimal"];
         };
         FiiHealthScore: {
-            /** @description Travas estruturais BR-038 (exclui alerta de concentração parametrizado) */
-            passed: boolean;
+            modelName?: string;
+            modelVersion?: string;
+            disclaimer?: string;
+            /** @description Travas estruturais heurísticas. null quando dados incompletos ou composição híbrida indeterminada. */
+            passed?: boolean | null;
+            /** @enum {string} */
+            overallStatus?: "ALL_APPLICABLE_PASSED" | "SOME_GATES_FAILED" | "INCOMPLETE_DATA" | "PARTIAL_EVALUATION_PAPER_SEGMENT" | "INDETERMINATE_HYBRID_COMPOSITION";
+            evaluationCoverage?: {
+                applicableGatesCount: number;
+                observedGatesCount: number;
+                passedGatesCount: number;
+                isComplete: boolean;
+            };
             /** @description Alerta parametrizado. threshold é fração 0–1 (default 0.2 = 20%, Blueprint §3.3); não é regra universal. unit sempre FRACTION_0_1. */
             concentrationAlert?: {
                 /** @description Fração 0–1 (0.2 ≡ 20%) */
@@ -3422,15 +3530,20 @@ export interface components {
                 triggered?: boolean;
                 unavailable?: boolean;
                 /** @enum {string} */
-                applicability?: "OK" | "NOT_APPLICABLE" | "SEGMENT_UNKNOWN" | "APPLICABLE_MISSING" | "STALE";
+                applicability?: "OK" | "NOT_APPLICABLE" | "SEGMENT_UNKNOWN" | "APPLICABLE_MISSING" | "INDETERMINATE_COMPOSITION" | "STALE";
             };
             /** @enum {string|null} */
             segmentKind?: "BRICK" | "PAPER" | "HYBRID" | "UNKNOWN" | null;
             gates: {
                 id: string;
                 label: string;
-                passed: boolean;
-                observed: components["schemas"]["Decimal"];
+                criterionRationale?: string;
+                /** @enum {string} */
+                applicability?: "APPLICABLE" | "NOT_APPLICABLE_SEGMENT" | "INDETERMINATE_COMPOSITION";
+                /** @enum {string} */
+                status?: "PASSED" | "FAILED" | "UNAVAILABLE" | "NOT_APPLICABLE" | "INDETERMINATE";
+                passed?: boolean | null;
+                observed?: components["schemas"]["Decimal"];
                 threshold: string;
             }[];
         };
@@ -4856,6 +4969,30 @@ export interface operations {
             };
         };
     };
+    getYieldOnCostSummary: {
+        parameters: {
+            query?: {
+                asOf?: string;
+            };
+            header?: never;
+            path: {
+                portfolioId: components["parameters"]["PortfolioId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resumo de YoC ponderado da carteira */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YieldOnCostSummary"];
+                };
+            };
+        };
+    };
     getDividendSeasonality: {
         parameters: {
             query?: {
@@ -5779,6 +5916,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TreasuryDurationView"][];
+                };
+            };
+        };
+    };
+    getTreasuryDurationSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                portfolioId: components["parameters"]["PortfolioId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TreasuryDurationSummaryResponse"];
                 };
             };
         };

@@ -748,7 +748,28 @@ const EtfMetrics = z
 
 const FiiHealthScore = z
   .object({
-    passed: z.boolean(),
+    modelName: z.string().optional(),
+    modelVersion: z.string().optional(),
+    disclaimer: z.string().optional(),
+    passed: z.boolean().nullish(),
+    overallStatus: z
+      .enum([
+        "ALL_APPLICABLE_PASSED",
+        "SOME_GATES_FAILED",
+        "INCOMPLETE_DATA",
+        "PARTIAL_EVALUATION_PAPER_SEGMENT",
+        "INDETERMINATE_HYBRID_COMPOSITION",
+      ])
+      .optional(),
+    evaluationCoverage: z
+      .object({
+        applicableGatesCount: z.number().int(),
+        observedGatesCount: z.number().int(),
+        passedGatesCount: z.number().int(),
+        isComplete: z.boolean(),
+      })
+      .passthrough()
+      .optional(),
     concentrationAlert: z
       .object({
         threshold: z.number().gte(0).lte(1),
@@ -761,6 +782,7 @@ const FiiHealthScore = z
           "NOT_APPLICABLE",
           "SEGMENT_UNKNOWN",
           "APPLICABLE_MISSING",
+          "INDETERMINATE_COMPOSITION",
           "STALE",
         ]),
       })
@@ -773,8 +795,25 @@ const FiiHealthScore = z
         .object({
           id: z.string(),
           label: z.string(),
-          passed: z.boolean(),
-          observed: Decimal,
+          criterionRationale: z.string().optional(),
+          applicability: z
+            .enum([
+              "APPLICABLE",
+              "NOT_APPLICABLE_SEGMENT",
+              "INDETERMINATE_COMPOSITION",
+            ])
+            .optional(),
+          status: z
+            .enum([
+              "PASSED",
+              "FAILED",
+              "UNAVAILABLE",
+              "NOT_APPLICABLE",
+              "INDETERMINATE",
+            ])
+            .optional(),
+          passed: z.boolean().nullish(),
+          observed: Decimal.optional(),
           threshold: z.string(),
         })
         .passthrough()
@@ -876,7 +915,39 @@ const DividendReceipt = z
   .passthrough();
 
 const YieldOnCost = z
-  .object({ ticker: z.string(), yocPercent: Decimal, provenance: Provenance })
+  .object({
+    ticker: z.string(),
+    yocPercent: Decimal,
+    provenance: Provenance,
+    status: z
+      .enum(["OK", "COST_UNKNOWN", "NO_DIVIDENDS_PAID", "NOT_APPLICABLE"])
+      .optional(),
+    incomeNet12m: Decimal.optional(),
+    costBasis: Decimal.optional(),
+    asOf: z.string().optional(),
+    windowDays: z.number().int().optional(),
+  })
+  .passthrough();
+
+const YieldOnCostSummary = z
+  .object({
+    asOf: z.string(),
+    windowStart: z.string(),
+    windowDays: z.number().int(),
+    yocWeightedPercent: Decimal.optional(),
+    totalIncome12mEligible: Decimal,
+    totalCostEligible: Decimal,
+    coverage: z
+      .object({
+        coveredPositionsCount: z.number().int(),
+        totalPositionsCount: z.number().int(),
+        costCoveredAmount: Decimal,
+        totalCostAmount: Decimal,
+        isFullyCovered: z.boolean(),
+      })
+      .passthrough(),
+    items: z.array(YieldOnCost),
+  })
   .passthrough();
 
 const DividendSeasonality = z
@@ -1647,9 +1718,56 @@ const TreasuryDurationView = z
   .object({
     id: z.string().uuid(),
     title: z.string(),
-    macaulayYears: Decimal,
-    modifiedDuration: Decimal,
-    dv01: Decimal,
+    bondType: z.string().optional(),
+    species: z.string().optional(),
+    status: z.enum([
+      "OK",
+      "UNSUPPORTED",
+      "PU_MISSING",
+      "SETTLED",
+      "ZERO_QUANTITY",
+      "MATURED",
+    ]),
+    reason: z.string().nullish(),
+    riskGroup: z.enum(["PREFIXED", "INFLATION_REAL", "OTHER"]).optional(),
+    marketValue: Decimal.optional(),
+    quantity: Decimal.optional(),
+    macaulayYears: Decimal.optional(),
+    modifiedDuration: Decimal.optional(),
+    dv01: Decimal.optional(),
+  })
+  .passthrough();
+
+const TreasuryDurationGroup = z
+  .object({
+    group: z.enum(["PREFIXED", "INFLATION_REAL", "OTHER"]),
+    marketValueTotal: Decimal,
+    weightedModifiedDuration: Decimal.optional(),
+    weightedMacaulayYears: Decimal.optional(),
+    totalDv01: Decimal.optional(),
+    titlesCount: z.number().int(),
+  })
+  .passthrough();
+
+const TreasuryDurationCoverage = z
+  .object({
+    valuedPortfolioMarketValue: Decimal,
+    prefixedCoveredMarketValue: Decimal,
+    inflationRealCoveredMarketValue: Decimal,
+    unsupportedMarketValue: Decimal,
+    unpricedLotsCount: z.number().int(),
+    unpricedLotsQuantity: Decimal,
+    isPortfolioValuationComplete: z.boolean(),
+    coveragePercent: Decimal.optional(),
+    note: z.string(),
+  })
+  .passthrough();
+
+const TreasuryDurationSummaryResponse = z
+  .object({
+    groups: z.array(TreasuryDurationGroup),
+    coverage: TreasuryDurationCoverage,
+    items: z.array(TreasuryDurationView),
   })
   .passthrough();
 
@@ -2323,6 +2441,7 @@ export const schemas = {
   DividendView,
   DividendReceipt,
   YieldOnCost,
+  YieldOnCostSummary,
   DividendSeasonality,
   DividendProjection,
   EttjCurveKind,
@@ -2379,6 +2498,9 @@ export const schemas = {
   TreasuryBondHistory,
   TreasuryHistoryResponse,
   TreasuryDurationView,
+  TreasuryDurationGroup,
+  TreasuryDurationCoverage,
+  TreasuryDurationSummaryResponse,
   AllocationTargetsPut,
   AllocationTargets,
   AllocationSimulateRequest,
